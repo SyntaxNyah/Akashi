@@ -1,8 +1,10 @@
 #include "core/command_context.h"
 
+#include "akashi/permissions.h"
 #include "core/client_session.h"
 #include "core/command_registry.h"
 #include "core/server_context.h"
+#include "world/area.h"
 
 #include <QRandomGenerator>
 
@@ -111,6 +113,13 @@ bool CommandContext::targetIsImmune(int f_target_id) const
     const auto l_spec = m_server->commandRegistry()->spec(m_command_name);
     if (!l_spec || l_spec->target_immune_if.isEmpty()) {
         return false;
+    }
+    // area.cm is the offer to *take* CM status, not the status itself:
+    // walk-in areas grant it to everyone, so immunity must be read from the
+    // area's live owner list rather than the permission.
+    if (l_spec->target_immune_if == akashi::permission::area_cm) {
+        akashi::Area *l_area = m_server->areaById(areaId());
+        return l_area && l_area->owners().contains(f_target_id);
     }
     akashi::ClientSession *l_target = m_server->clientById(f_target_id);
     return l_target && l_target->canPerform(l_spec->target_immune_if);
