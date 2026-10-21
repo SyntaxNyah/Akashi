@@ -23,6 +23,7 @@ class tst_DBManager : public QObject
     void untimedSanctionsHoldUntilLifted();
     void sanctionsMatchByHwid();
     void oldSanctionTablesGainTheNewColumns();
+    void failedMigrationStopsTheChain();
 };
 
 void tst_DBManager::olderActiveBanStillCounts()
@@ -240,6 +241,27 @@ void tst_DBManager::oldSanctionTablesGainTheNewColumns()
     QCOMPARE(l_old_row->data, QString());
     l_manager.upsertSanction({"5678", "charcurse", "moderator", l_now, -1, "HW-A", "Phoenix"});
     QCOMPARE(l_manager.sanctionsForIdentity("0000", "HW-A", l_now).size(), 1);
+}
+
+void tst_DBManager::failedMigrationStopsTheChain()
+{
+    QSqlDatabase l_database = QSqlDatabase::addDatabase("QSQLITE", "test_db_failed_migration");
+    l_database.setDatabaseName(":memory:");
+    QVERIFY(l_database.open());
+
+    // A version-1 database whose users table lacks the ACL column, so
+    // migration 2 fails.
+    QSqlQuery l_setup(l_database);
+    QVERIFY(l_setup.exec("CREATE TABLE bans ('ID' INTEGER, 'IPID' TEXT, 'HDID' TEXT, 'IP' TEXT, 'TIME' INTEGER, 'REASON' TEXT, 'DURATION' INTEGER, 'MODERATOR' TEXT, PRIMARY KEY('ID' AUTOINCREMENT))"));
+    QVERIFY(l_setup.exec("CREATE TABLE users ('ID' INTEGER, 'USERNAME' TEXT, 'SALT' TEXT, 'PASSWORD' TEXT, PRIMARY KEY('ID' AUTOINCREMENT))"));
+    QVERIFY(l_setup.exec("PRAGMA user_version = 1"));
+
+    // The chain stops there instead of stamping later versions over the
+    // failed one, so the next start tries migration 2 again.
+    QTest::ignoreMessage(QtCriticalMsg, QRegularExpression(QStringLiteral("migration to version 2 failed")));
+    QTest::ignoreMessage(QtCriticalMsg, QRegularExpression(QStringLiteral("stays at schema version 1")));
+    DBManager l_manager(l_database);
+    QCOMPARE(akashi::DatabaseService::schemaVersion(l_database), 1);
 }
 
 }

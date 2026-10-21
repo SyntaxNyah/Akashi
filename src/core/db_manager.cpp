@@ -3,6 +3,8 @@
 #include "akashi/database_service.h"
 #include "akashi/logging_categories.h"
 
+#include <functional>
+
 // Runs a prepared query and logs the database's own error when it fails,
 // so no query site swallows a failure silently.
 static bool execLogged(QSqlQuery &f_query, const char *f_what)
@@ -401,56 +403,64 @@ int DBManager::checkVersion()
     }
 }
 
+// Whether a table still lacks a column, so a migration can skip what an
+// older build already added.
+static bool missingColumn(QSqlDatabase &f_db, const QString &f_table, const QString &f_column)
+{
+    QSqlQuery l_check(f_db);
+    l_check.prepare(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('%1') WHERE name = ?").arg(f_table));
+    l_check.addBindValue(f_column);
+    return l_check.exec() && l_check.first() && l_check.value(0).toInt() == 0;
+}
+
 void DBManager::updateDB(int current_version)
 {
-    switch (current_version) {
-    case 0:
-        akashi::DatabaseService::applyMigration(db, 1, [](QSqlDatabase &f_db) {
-            return QSqlQuery(f_db).exec("ALTER TABLE bans ADD COLUMN MODERATOR TEXT");
-        });
-        Q_FALLTHROUGH();
-    case 1:
-        akashi::DatabaseService::applyMigration(db, 2, [](QSqlDatabase &f_db) {
+    // Migration N brings the schema to version N. They run in order and the
+    // chain stops at the first failure: a later one stamping its version
+    // would skip the failed one forever.
+    const QList<std::function<bool(QSqlDatabase &)>> l_migrations = {
+        [](QSqlDatabase &f_db) {
+            return !missingColumn(f_db, QStringLiteral("bans"), QStringLiteral("MODERATOR")) ||
+                   QSqlQuery(f_db).exec("ALTER TABLE bans ADD COLUMN MODERATOR TEXT");
+        },
+        [](QSqlDatabase &f_db) {
             return QSqlQuery(f_db).exec("UPDATE users SET ACL = 'SUPER' WHERE USERNAME = 'root'");
-        });
-        Q_FALLTHROUGH();
-    case 2:
+        },
         // The ban checks run on every connection; without these they scan the whole table.
-        akashi::DatabaseService::applyMigration(db, 3, [](QSqlDatabase &f_db) {
+        [](QSqlDatabase &f_db) {
             return QSqlQuery(f_db).exec("CREATE INDEX IF NOT EXISTS bans_ipid_time ON bans(IPID, TIME)") &&
                    QSqlQuery(f_db).exec("CREATE INDEX IF NOT EXISTS bans_hdid_time ON bans(HDID, TIME)") &&
                    QSqlQuery(f_db).exec("CREATE INDEX IF NOT EXISTS bans_ip ON bans(IP)") &&
                    QSqlQuery(f_db).exec("CREATE INDEX IF NOT EXISTS users_username ON users(USERNAME)");
-        });
-        Q_FALLTHROUGH();
-    case 3:
+        },
         // Timed sanctions outlive sessions: stored here, applied on
         // connect, lifted by the scheduler.
-        akashi::DatabaseService::applyMigration(db, 4, [](QSqlDatabase &f_db) {
+        [](QSqlDatabase &f_db) {
             return QSqlQuery(f_db).exec("CREATE TABLE IF NOT EXISTS sanctions ('ID' INTEGER, 'IPID' TEXT NOT NULL, 'SANCTION' TEXT NOT NULL, 'MODERATOR' TEXT, 'ISSUED' INTEGER, 'EXPIRES' INTEGER NOT NULL, PRIMARY KEY('ID' AUTOINCREMENT), UNIQUE('IPID', 'SANCTION'))");
-        });
-        Q_FALLTHROUGH();
-    case 4:
+        },
         // Untimed sanctions persist too (EXPIRES -1), matched by HWID as
         // well, with a payload column for list-carrying ones (charcurse).
         // Guarded per column: an older database that already got the new
         // table shape from the constructor must not re-add them.
-        akashi::DatabaseService::applyMigration(db, 5, [](QSqlDatabase &f_db) {
-            const auto l_missingColumn = [&f_db](const QString &f_name) {
-                QSqlQuery l_check(f_db);
-                l_check.prepare("SELECT COUNT(*) FROM pragma_table_info('sanctions') WHERE name = ?");
-                l_check.addBindValue(f_name);
-                return l_check.exec() && l_check.first() && l_check.value(0).toInt() == 0;
-            };
-            if (l_missingColumn(QStringLiteral("HWID")) && !QSqlQuery(f_db).exec("ALTER TABLE sanctions ADD COLUMN HWID TEXT NOT NULL DEFAULT ''")) {
+        [](QSqlDatabase &f_db) {
+            if (missingColumn(f_db, QStringLiteral("sanctions"), QStringLiteral("HWID")) && !QSqlQuery(f_db).exec("ALTER TABLE sanctions ADD COLUMN HWID TEXT NOT NULL DEFAULT ''")) {
                 return false;
             }
-            if (l_missingColumn(QStringLiteral("DATA")) && !QSqlQuery(f_db).exec("ALTER TABLE sanctions ADD COLUMN DATA TEXT NOT NULL DEFAULT ''")) {
+            if (missingColumn(f_db, QStringLiteral("sanctions"), QStringLiteral("DATA")) && !QSqlQuery(f_db).exec("ALTER TABLE sanctions ADD COLUMN DATA TEXT NOT NULL DEFAULT ''")) {
                 return false;
             }
             return true;
-        });
-        break;
+        },
+    };
+    static_assert(DB_VERSION == 5, "add the new migration to the list above");
+
+    for (int l_version = current_version + 1; l_version <= l_migrations.size(); ++l_version) {
+        if (!akashi::DatabaseService::applyMigration(db, l_version, l_migrations.at(l_version - 1))) {
+            qCCritical(akashiDb).nospace() << "The database stays at schema version " << l_version - 1
+                                           << "; the later migrations were not attempted. Fix the error above and restart.";
+            return;
+        }
+        db_version = l_version;
     }
 }
 
