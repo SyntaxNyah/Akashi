@@ -87,8 +87,7 @@ class AKASHI_CORE_EXPORT CommandContext
     QString commandName() const;
 
     // The spec's declared escalation permission, empty when none - so a
-    // body checks canPerform(escalatesTo()) and an extension clearing the
-    // field opens the escalated form.
+    // body checks canPerform(escalatesTo()) and /help can name it.
     QString escalatesTo() const;
 
     // True when the acted-on client holds the spec's declared immunity

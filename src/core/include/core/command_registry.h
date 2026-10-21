@@ -32,25 +32,6 @@ class AKASHI_CORE_EXPORT CommandRegistry : public IService
     // must carry an id and a handler.
     bool registerCommand(const CommandSpec &f_spec, const QString &f_owner_id);
 
-    // Adds another gated form to an existing variant-based command. Refuses
-    // unknown commands, duplicate ids, argument windows a declared form
-    // already covers, and commands without variants (their single handler
-    // would become unreachable).
-    bool registerVariant(const QString &f_command_name, const CommandVariant &f_variant,
-                         const QString &f_owner_id = {});
-
-    // Stacks a shadow over an existing command: higher priority runs
-    // earlier, ties keep registration order. The dispatcher re-gates on
-    // every argument list a shadow hands forward, so a shadow can
-    // neither soften nor sharpen the verb it wraps. Shadows pop with
-    // their owner, restoring the original binding; an unknown command
-    // is refused.
-    bool shadowCommand(const QString &f_command_name, int f_priority, CommandShadowFn f_shadow,
-                       const QString &f_owner_id = {});
-
-    // The command's shadow stack, outermost first.
-    QList<CommandShadow> shadowsOf(const QString &f_command_name) const;
-
     void unregisterAll(const QString &f_owner_id);
 
     std::optional<CommandSpec> spec(const QString &f_command_name) const;
@@ -73,12 +54,12 @@ class AKASHI_CORE_EXPORT CommandRegistry : public IService
     // /commands and /help list through this so they mirror the dispatcher.
     bool canUse(const QString &f_command, const std::function<bool(const QString &)> &f_can_perform) const;
 
-    // Applies command_extensions.json. The validator answers whether a
-    // permission name exists; an override naming an unknown permission is
-    // skipped loudly instead of loading a broken gate. A "+" joins the
-    // members of an all-of group: "gamemaster+kick ban" reads as
-    // (gamemaster AND kick) OR ban.
-    void applyExtensions(const QString &f_path, const std::function<bool(const QString &)> &f_known_permission = {});
+    // Applies command_extensions.json, which adds aliases and nothing else:
+    // a command's behaviour and requirements belong to its definition, and
+    // a plugin that wants different ones registers its own. An old
+    // "permissions" override is no longer applied and is reported
+    // critically, because it may have been tightening a command.
+    void applyExtensions(const QString &f_path);
 
   private:
     struct Entry
@@ -92,7 +73,6 @@ class AKASHI_CORE_EXPORT CommandRegistry : public IService
 
     QHash<QString, Entry> m_entries;
     QHash<QString, QString> m_aliases;
-    QHash<QString, QList<CommandShadow>> m_shadows;
     QThread *m_owner_thread;
 };
 

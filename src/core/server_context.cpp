@@ -227,7 +227,7 @@ ExitCode ServerContext::start()
     // them before the plugin's library leaves memory.
     connect(m_plugin_manager, &akashi::PluginManager::pluginAboutToUnload,
             this, &ServerContext::onPluginAboutToUnload);
-    // A plugin loaded at runtime registers commands the owner's extensions
+    // A plugin loaded at runtime registers commands the owner's aliases
     // may address; re-applying is idempotent.
     connect(m_plugin_manager, &akashi::PluginManager::pluginLoaded, this, &ServerContext::onPluginLoaded);
 
@@ -244,8 +244,7 @@ ExitCode ServerContext::start()
     }
 
     m_plugin_manager->startPlugins(l_plugin_allowlist);
-    m_command_registry->applyExtensions(configPath("command_extensions.json"),
-                                        std::bind_front(&akashi::PermissionRegistry::isRegistered, m_permission_registry));
+    m_command_registry->applyExtensions(configPath("command_extensions.json"));
     // Config grants apply after the plugins start, like the extensions,
     // so grants of plugin-registered permissions land too - and the role
     // quarantine runs once every permission that will exist does.
@@ -545,8 +544,7 @@ std::optional<QString> ServerContext::applyDisemvowelFilter(const QString &f_tex
 
 void ServerContext::onPluginLoaded()
 {
-    m_command_registry->applyExtensions(configPath("command_extensions.json"),
-                                        std::bind_front(&akashi::PermissionRegistry::isRegistered, m_permission_registry));
+    m_command_registry->applyExtensions(configPath("command_extensions.json"));
     // A plugin that registered permissions changed what the catalog
     // knows, so the offers and the quarantine are recomputed against it.
     reconcilePermissions();

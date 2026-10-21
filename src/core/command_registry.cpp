@@ -8,7 +8,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-#include <algorithm>
 #include <utility>
 
 namespace akashi {
@@ -49,12 +48,7 @@ bool CommandRegistry::registerCommand(const CommandSpec &f_spec, CommandHandler 
         }
     }
 
-    Entry l_entry{f_spec, std::move(f_handler), f_owner_id};
-    // The command's own variants belong to its owner.
-    for (CommandVariant &l_variant : l_entry.spec.variants) {
-        l_variant.owner_id = f_owner_id;
-    }
-    m_entries.insert(l_key, std::move(l_entry));
+    m_entries.insert(l_key, Entry{f_spec, std::move(f_handler), f_owner_id});
     for (const QString &l_alias : f_spec.aliases) {
         m_aliases.insert(l_alias.toLower(), l_key);
     }
@@ -69,92 +63,19 @@ bool CommandRegistry::registerCommand(const CommandSpec &f_spec, const QString &
     return registerCommand(f_spec, CommandHandler(), f_owner_id);
 }
 
-bool CommandRegistry::registerVariant(const QString &f_command_name, const CommandVariant &f_variant,
-                                      const QString &f_owner_id)
-{
-    AKASHI_ASSERT_OWNER_THREAD();
-    auto l_entry = m_entries.find(resolve(f_command_name));
-    if (l_entry == m_entries.end() || l_entry->spec.variants.isEmpty()) {
-        return false;
-    }
-    if (f_variant.id.isEmpty() || !f_variant.handler) {
-        return false;
-    }
-    for (const CommandVariant &l_existing : l_entry->spec.variants) {
-        if (l_existing.id == f_variant.id) {
-            return false;
-        }
-        // Overlapping windows would shadow the appended form partially.
-        const bool l_below = f_variant.max_args >= 0 && f_variant.max_args < l_existing.min_args;
-        const bool l_above = l_existing.max_args >= 0 && l_existing.max_args < f_variant.min_args;
-        if (!l_below && !l_above) {
-            return false;
-        }
-    }
-
-    CommandVariant l_variant = f_variant;
-    l_variant.owner_id = f_owner_id;
-    l_entry->spec.variants.append(std::move(l_variant));
-    return true;
-}
-
-bool CommandRegistry::shadowCommand(const QString &f_command_name, int f_priority, CommandShadowFn f_shadow,
-                                    const QString &f_owner_id)
-{
-    AKASHI_ASSERT_OWNER_THREAD();
-    const QString l_key = resolve(f_command_name);
-    if (l_key.isEmpty() || !f_shadow) {
-        return false;
-    }
-    QList<CommandShadow> &l_stack = m_shadows[l_key];
-    CommandShadow l_entry{f_priority, std::move(f_shadow), f_owner_id};
-    // Insert after equal priorities, so ties keep registration order and
-    // a later shadow can never preempt an earlier one at the same rank.
-    auto l_pos = std::upper_bound(l_stack.cbegin(), l_stack.cend(), l_entry,
-                                  [](const CommandShadow &a, const CommandShadow &b) {
-                                      return a.priority > b.priority;
-                                  });
-    l_stack.insert(l_pos, std::move(l_entry));
-    return true;
-}
-
-QList<CommandShadow> CommandRegistry::shadowsOf(const QString &f_command_name) const
-{
-    AKASHI_ASSERT_OWNER_THREAD();
-    return m_shadows.value(resolve(f_command_name));
-}
-
 void CommandRegistry::unregisterAll(const QString &f_owner_id)
 {
     AKASHI_ASSERT_OWNER_THREAD();
     m_entries.removeIf([this, &f_owner_id](std::pair<const QString &, Entry &> f_item) {
-        Entry &l_entry = f_item.second;
-        if (l_entry.owner_id == f_owner_id) {
-            for (const QString &l_alias : l_entry.spec.aliases) {
-                m_aliases.remove(l_alias.toLower());
-            }
-            // A dead command's shadow stack must not survive onto a later
-            // command re-registered under the same name.
-            m_shadows.remove(f_item.first);
-            return true;
+        const Entry &l_entry = f_item.second;
+        if (l_entry.owner_id != f_owner_id) {
+            return false;
         }
-        // A surviving command may still carry the owner's added variants.
-        l_entry.spec.variants.removeIf([&f_owner_id](const CommandVariant &v) {
-            return v.owner_id == f_owner_id;
-        });
-        return false;
+        for (const QString &l_alias : l_entry.spec.aliases) {
+            m_aliases.remove(l_alias.toLower());
+        }
+        return true;
     });
-    for (auto it = m_shadows.begin(); it != m_shadows.end();) {
-        it->removeIf([&f_owner_id](const CommandShadow &s) {
-            return s.owner_id == f_owner_id;
-        });
-        if (it->isEmpty()) {
-            it = m_shadows.erase(it);
-        }
-        else {
-            ++it;
-        }
-    }
 }
 
 QString CommandRegistry::resolve(const QString &f_name) const
@@ -226,31 +147,7 @@ bool CommandRegistry::canUse(const QString &f_command, const std::function<bool(
     return false;
 }
 
-// Reads one extension permission string into a gate: "gamemaster+kick
-// ban" is (gamemaster AND kick) OR ban. Answers false - the override
-// must be skipped whole - when the validator knows a name is a typo; a
-// half-applied gate could be softer than intended.
-static bool parseExtensionGate(const QString &f_text, const std::function<bool(const QString &)> &f_known,
-                               Gate &f_gate)
-{
-    f_gate.groups.clear();
-    const QStringList l_terms = f_text.split(QChar(' '), Qt::SkipEmptyParts);
-    for (const QString &l_term : l_terms) {
-        const QStringList l_members = l_term.split(QChar('+'), Qt::SkipEmptyParts);
-        for (const QString &l_member : l_members) {
-            if (f_known && !f_known(l_member)) {
-                qCWarning(akashiCommands) << "command_extensions: unknown permission" << l_member << "- the override was skipped";
-                return false;
-            }
-        }
-        if (!l_members.isEmpty()) {
-            f_gate.groups.append(l_members);
-        }
-    }
-    return true;
-}
-
-void CommandRegistry::applyExtensions(const QString &f_path, const std::function<bool(const QString &)> &f_known_permission)
+void CommandRegistry::applyExtensions(const QString &f_path)
 {
     AKASHI_ASSERT_OWNER_THREAD();
     QFile l_file(f_path);
@@ -265,40 +162,24 @@ void CommandRegistry::applyExtensions(const QString &f_path, const std::function
 
     const QJsonObject l_root = l_doc.object();
     for (auto it = l_root.begin(); it != l_root.end(); ++it) {
-        QString l_name = it.key().toLower();
+        const QString l_name = it.key().toLower();
+        const QJsonObject l_ext = it.value().toObject();
 
-        // "command.variant" addresses one gated form of a variant command.
-        QString l_variant_id;
-        if (const int l_dot = l_name.indexOf(QChar('.')); l_dot >= 0) {
-            l_variant_id = l_name.mid(l_dot + 1);
-            l_name = l_name.left(l_dot);
+        // Overrides of a command's requirements are gone: a command's
+        // definition owns its gates. Ignoring one silently could loosen a
+        // command the owner had tightened, so every one is reported.
+        if (l_ext.contains(QStringLiteral("permissions")) || l_name.contains(QChar('.'))) {
+            qCCritical(akashiCommands) << "command_extensions:" << it.key()
+                                       << "overrides permissions, which is no longer supported - the override was NOT applied"
+                                       << "and the command keeps its own requirements. Grant or revoke permissions in permissions.json instead.";
+        }
+        if (l_name.contains(QChar('.'))) {
+            continue;
         }
 
         auto l_entry = m_entries.find(l_name);
         if (l_entry == m_entries.end()) {
             qCWarning(akashiCommands) << "command_extensions: unknown command" << l_name;
-            continue;
-        }
-
-        const QJsonObject l_ext = it.value().toObject();
-
-        if (!l_variant_id.isEmpty()) {
-            bool l_found = false;
-            for (CommandVariant &l_variant : l_entry->spec.variants) {
-                if (l_variant.id == l_variant_id) {
-                    if (l_ext.contains(QStringLiteral("permissions"))) {
-                        Gate l_gate;
-                        if (parseExtensionGate(l_ext.value(QStringLiteral("permissions")).toString(), f_known_permission, l_gate)) {
-                            l_variant.gate = l_gate;
-                        }
-                    }
-                    l_found = true;
-                    break;
-                }
-            }
-            if (!l_found) {
-                qCWarning(akashiCommands) << "command_extensions:" << l_name << "has no variant" << l_variant_id;
-            }
             continue;
         }
 
@@ -315,19 +196,6 @@ void CommandRegistry::applyExtensions(const QString &f_path, const std::function
                 }
                 l_entry->spec.aliases.append(l_alias_key);
                 m_aliases.insert(l_alias_key, l_name);
-            }
-        }
-
-        if (l_ext.contains(QStringLiteral("permissions"))) {
-            if (!l_entry->spec.variants.isEmpty()) {
-                qCWarning(akashiCommands) << "command_extensions:" << l_name << "has gated forms; address one as"
-                                          << l_name + QStringLiteral(".<variant>") << "instead";
-            }
-            else {
-                Gate l_gate;
-                if (parseExtensionGate(l_ext.value(QStringLiteral("permissions")).toString(), f_known_permission, l_gate)) {
-                    l_entry->spec.gate = l_gate;
-                }
             }
         }
     }

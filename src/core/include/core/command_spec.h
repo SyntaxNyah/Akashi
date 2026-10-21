@@ -12,24 +12,6 @@ class CommandContext;
 
 using CommandHandler = std::function<void(CommandContext &)>;
 
-// A shadow's way forward: invoke it with the (possibly rewritten)
-// argument list, and the gate plus variant selection re-run on those
-// arguments before anything deeper executes - a rewrite can never
-// smuggle arguments past the gate. Not calling it swallows the command.
-using CommandNext = std::function<void(const QStringList &)>;
-
-// A shadow over an existing command: it runs in the command's place and
-// decides whether, and with what arguments, the wrapped binding
-// proceeds. This is the packet-interceptor pattern on the command chain.
-using CommandShadowFn = std::function<void(CommandContext &, const CommandNext &)>;
-
-struct CommandShadow
-{
-    int priority = 0; // higher runs earlier (outermost)
-    CommandShadowFn shadow;
-    QString owner_id;
-};
-
 // A command form's whole gate: any-of over all-of. One permission is a
 // group of one, so the ordinary case still reads as a plain name -
 // {"area.cm","kick"} in one group needs both, two groups of one needs
@@ -124,17 +106,16 @@ struct Gate
 // One gated form of a command. Variants let one command carry different
 // permission requirements per argument shape, resolved at the dispatch gate
 // before the handler runs - no permission check hides inside a handler body,
-// so extension overrides and the command list see every gate.
+// so the command list sees every gate.
 struct CommandVariant
 {
-    QString id; // names the form for extension overrides ("command.id")
+    QString id; // names the form, for /help and /why
     int min_args = 0;
     int max_args = -1; // -1 accepts any count at or above min_args
     Gate gate;         // checked at the dispatch gate
     QString usage;
     QString description;
     CommandHandler handler;
-    QString owner_id; // set by the registry; plugin unload sweeps by it
 
     bool matches(int f_argc) const
     {
@@ -158,8 +139,8 @@ struct CommandSpec
     QList<CommandVariant> variants;
 
     // A value-dependent escalation the body triggers but the spec names,
-    // so /help shows it and an extension can override it: timer 0 needs
-    // this, the SUPER role as a /setperms argument needs this.
+    // so /help shows it: timer 0 needs this, the SUPER role as a /setperms
+    // argument needs this.
     QString escalates_to;
     QString escalates_when; // the human words for /help
 

@@ -163,7 +163,7 @@ void cmdTimer(CommandContext &f_context)
     QTimer *l_requested_timer;
     if (l_timer_id == 0) {
         // Timer 0 is the server-wide one: the spec declares the
-        // escalation, so /help shows it and an extension can change it.
+        // escalation, so /help shows it.
         if (!f_context.canPerform(f_context.escalatesTo())) {
             f_context.reply("You are not authorized to alter the global timer.");
             return;

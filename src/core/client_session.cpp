@@ -520,15 +520,11 @@ void ClientSession::handleCommand(QString command, int argc, QStringList argv)
         sendServerMessage("Invalid command.");
         return;
     }
-    dispatchCommand(*l_command, argv, l_registry->shadowsOf(l_command->spec.name));
+    dispatchCommand(*l_command, argv);
 }
 
-// Runs one layer of the command's shadow chain. The gate and variant
-// selection run on THIS argument list - so when a shadow hands rewritten
-// arguments forward, they meet the same gate again and can neither
-// soften nor sharpen the verb they came through.
-void ClientSession::dispatchCommand(const akashi::CommandRegistry::Resolved &f_command, QStringList f_arguments,
-                                    QList<akashi::CommandShadow> f_shadows)
+// Picks the form, checks its gate and runs it. The only way a command runs.
+void ClientSession::dispatchCommand(const akashi::CommandRegistry::Resolved &f_command, const QStringList &f_arguments)
 {
     const akashi::CommandSpec &l_spec = f_command.spec;
     const int argc = f_arguments.size();
@@ -557,15 +553,6 @@ void ClientSession::dispatchCommand(const akashi::CommandRegistry::Resolved &f_c
         if (!l_spec.usage.isEmpty()) {
             sendServerMessage("The expected syntax for this command is: \n" + l_spec.usage);
         }
-        return;
-    }
-
-    if (!f_shadows.isEmpty()) {
-        const akashi::CommandShadow l_shadow = f_shadows.takeFirst();
-        akashi::CommandContext l_context(this, m_server, f_arguments, l_spec.name);
-        l_shadow.shadow(l_context, [this, f_command, f_shadows](const QStringList &f_rewritten) {
-            dispatchCommand(f_command, f_rewritten, f_shadows);
-        });
         return;
     }
 

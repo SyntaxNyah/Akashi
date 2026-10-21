@@ -403,9 +403,8 @@ class AKASHI_CORE_EXPORT ClientSession : public QObject, public IPacketContext
     // The one place a resolution query is assembled from session state.
     akashi::PermissionQuery buildPermissionQuery(const QString &f_permission, int f_area_id) const;
 
-    // One layer of the shadow chain; the gate re-runs per argument list.
-    void dispatchCommand(const akashi::CommandRegistry::Resolved &f_command, QStringList f_arguments,
-                         QList<akashi::CommandShadow> f_shadows);
+    // Picks the form, checks its gate and runs it.
+    void dispatchCommand(const akashi::CommandRegistry::Resolved &f_command, const QStringList &f_arguments);
 
     // The person's profile as told at the handshake; profile() exposes it.
     ClientProfile m_profile;

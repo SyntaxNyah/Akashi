@@ -32,10 +32,8 @@ class tst_CommandRegistry : public QObject
     void aclRoleEmptyIsNone();
 
     void applyExtensionsAddsAliases();
-    void applyExtensionsOverridesPermissions();
-    void applyExtensionsParsesAndGroupsAndValidates();
+    void applyExtensionsReportsAndIgnoresPermissionOverrides();
     void requirementGroupsExpressAnd();
-    void shadowsStackOrderAndSweep();
     void applyExtensionsSkipsUnknownCommand();
     void applyExtensionsSkipsCollidingAlias();
     void applyExtensionsMissingFileIsNoop();
@@ -46,11 +44,6 @@ class tst_CommandRegistry : public QObject
 
     void variantMatchPicksByArgCount();
     void registerCommandValidatesVariants();
-    void registerVariantAppendsGatedForm();
-    void registerVariantRefusals();
-    void registerVariantRejectsMalformedForms();
-    void unregisterAllSweepsAddedVariants();
-    void applyExtensionsOverridesVariantPermissions();
 };
 
 // A two-form command like /listperms: a free self form and a gated
@@ -237,62 +230,33 @@ void tst_CommandRegistry::applyExtensionsAddsAliases()
     QCOMPARE(l_spec->name, QStringLiteral("roll"));
 }
 
-void tst_CommandRegistry::applyExtensionsOverridesPermissions()
+void tst_CommandRegistry::applyExtensionsReportsAndIgnoresPermissionOverrides()
 {
+    // Overrides of a command's requirements are gone. An old file that
+    // still carries one must not change any gate - and must say so out
+    // loud, since the override may have been tightening the command.
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("kick"), {}, {QStringLiteral("moderation.kick")}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand({QStringLiteral("kick"), {}, {QStringLiteral("kick")}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("core")));
 
     QTemporaryDir l_dir;
     QVERIFY(l_dir.isValid());
     const QString l_path = l_dir.filePath(QStringLiteral("ext.json"));
     QFile l_file(l_path);
     QVERIFY(l_file.open(QIODevice::WriteOnly));
-    l_file.write(R"({"kick": {"permissions": "admin.kick super"}})");
+    l_file.write(R"({"kick": {"permissions": "super", "aliases": "boot"}, "listperms.user": {"permissions": "super"}})");
     l_file.close();
 
+    QTest::ignoreMessage(QtCriticalMsg, QRegularExpression("kick.*no longer supported"));
+    QTest::ignoreMessage(QtCriticalMsg, QRegularExpression("listperms\\.user.*no longer supported"));
     l_registry.applyExtensions(l_path);
 
-    auto l_spec = l_registry.spec("kick");
-    QVERIFY(l_spec.has_value());
-    QCOMPARE(l_spec->gate.permissions(), QStringList({QStringLiteral("admin.kick"), QStringLiteral("super")}));
-}
-
-void tst_CommandRegistry::applyExtensionsParsesAndGroupsAndValidates()
-{
-    akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("probe"), {}, {QStringLiteral("kick")}, 0, {}, {}}, [](akashi::CommandContext &) {});
-
-    QTemporaryDir l_dir;
-    QVERIFY(l_dir.isValid());
-    const auto l_write = [&l_dir](const char *f_name, const QByteArray &f_json) -> QString {
-        const QString l_path = l_dir.filePath(f_name);
-        QFile l_file(l_path);
-        if (!l_file.open(QIODevice::WriteOnly)) {
-            return {};
-        }
-        l_file.write(f_json);
-        return l_path;
-    };
-    const auto l_known = [](const QString &f_permission) {
-        static const QSet<QString> s_known{QStringLiteral("gamemaster"), QStringLiteral("kick"), QStringLiteral("ban")};
-        return s_known.contains(f_permission);
-    };
-
-    // "gamemaster+kick ban" reads as (gamemaster AND kick) OR ban.
-    l_registry.applyExtensions(l_write("groups.json", R"({"probe": {"permissions": "gamemaster+kick ban"}})"), l_known);
-    auto l_spec = l_registry.spec("probe");
-    QVERIFY(l_spec.has_value());
-    QCOMPARE(l_spec->gate.groups.size(), 2);
-    QCOMPARE(l_spec->gate.groups.at(0), QStringList({QStringLiteral("gamemaster"), QStringLiteral("kick")}));
-    QCOMPARE(l_spec->gate.groups.at(1), QStringList({QStringLiteral("ban")}));
-    QCOMPARE(l_spec->gate.describe(), QStringLiteral("gamemaster+kick, ban"));
-
-    // An override naming an unknown permission is skipped whole - a
-    // half-applied gate could be softer than the author intended.
-    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unknown permission")));
-    l_registry.applyExtensions(l_write("typo.json", R"({"probe": {"permissions": "gamemaster+nosuchperm"}})"), l_known);
-    l_spec = l_registry.spec("probe");
-    QCOMPARE(l_spec->gate.groups.size(), 2);
+    // Every gate is what the command declared.
+    QCOMPARE(l_registry.spec("kick")->gate.permissions(), QStringList{QStringLiteral("kick")});
+    const auto l_listperms = l_registry.spec("listperms");
+    QCOMPARE(l_listperms->match(1)->gate.permissions(), QStringList{QStringLiteral("modify_users")});
+    // The aliases in the same entry still apply.
+    QVERIFY(l_registry.contains(QStringLiteral("boot")));
 }
 
 void tst_CommandRegistry::requirementGroupsExpressAnd()
@@ -332,40 +296,6 @@ void tst_CommandRegistry::requirementGroupsExpressAnd()
     QVERIFY(l_registry.registerCommand(l_spec, QStringLiteral("core")));
     QVERIFY(l_registry.canUse(QStringLiteral("gated"), l_holding({QStringLiteral("gamemaster")})));
     QVERIFY(!l_registry.canUse(QStringLiteral("gated"), l_holding({QStringLiteral("kick")})));
-}
-
-void tst_CommandRegistry::shadowsStackOrderAndSweep()
-{
-    akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("probe"), {QStringLiteral("prb")}, {}, 0, {}, {}}, [](akashi::CommandContext &) {}, QStringLiteral("core"));
-
-    // An unknown command takes no shadow, and neither does a null one.
-    QVERIFY(!l_registry.shadowCommand(QStringLiteral("nosuchverb"), 10, [](akashi::CommandContext &, const akashi::CommandNext &) {}, QStringLiteral("p1")));
-    QVERIFY(!l_registry.shadowCommand(QStringLiteral("probe"), 10, {}, QStringLiteral("p1")));
-
-    // Higher priority sits outermost; equal priorities keep registration
-    // order; an alias resolves to the same stack.
-    const auto l_noop = [](akashi::CommandContext &, const akashi::CommandNext &) {};
-    QVERIFY(l_registry.shadowCommand(QStringLiteral("probe"), 10, l_noop, QStringLiteral("low")));
-    QVERIFY(l_registry.shadowCommand(QStringLiteral("prb"), 20, l_noop, QStringLiteral("high_old")));
-    QVERIFY(l_registry.shadowCommand(QStringLiteral("probe"), 20, l_noop, QStringLiteral("high_new")));
-    QList<akashi::CommandShadow> l_stack = l_registry.shadowsOf(QStringLiteral("prb"));
-    QCOMPARE(l_stack.size(), 3);
-    QCOMPARE(l_stack.at(0).owner_id, QStringLiteral("high_old"));
-    QCOMPARE(l_stack.at(1).owner_id, QStringLiteral("high_new"));
-    QCOMPARE(l_stack.at(2).owner_id, QStringLiteral("low"));
-
-    // A shadow leaves with its owner; the others keep their places.
-    l_registry.unregisterAll(QStringLiteral("high_old"));
-    l_stack = l_registry.shadowsOf(QStringLiteral("probe"));
-    QCOMPARE(l_stack.size(), 2);
-    QCOMPARE(l_stack.at(0).owner_id, QStringLiteral("high_new"));
-
-    // The stack dies with its command, so a later command re-registered
-    // under the same name starts unshadowed.
-    l_registry.unregisterAll(QStringLiteral("core"));
-    l_registry.registerCommand({QStringLiteral("probe"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {}, QStringLiteral("core2"));
-    QVERIFY(l_registry.shadowsOf(QStringLiteral("probe")).isEmpty());
 }
 
 void tst_CommandRegistry::applyExtensionsSkipsUnknownCommand()
@@ -525,116 +455,6 @@ void tst_CommandRegistry::registerCommandValidatesVariants()
 
     QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("core")));
     QCOMPARE(l_registry.spec("listperms")->variants.size(), 2);
-}
-
-void tst_CommandRegistry::registerVariantAppendsGatedForm()
-{
-    akashi::CommandRegistry l_registry;
-    const akashi::CommandSpec l_spec{
-        .name = QStringLiteral("inspect"),
-        .variants = {
-            {QStringLiteral("own"), 0, 0, {}, {}, {}, [](akashi::CommandContext &) {}},
-        },
-    };
-    QVERIFY(l_registry.registerCommand(l_spec, QStringLiteral("core")));
-
-    // A plugin bolts a gated one-argument form onto the command.
-    akashi::CommandVariant l_extra{QStringLiteral("other"), 1, 1, {QStringLiteral("my.permission")}, {}, {}, [](akashi::CommandContext &) {}};
-    QVERIFY(l_registry.registerVariant(QStringLiteral("inspect"), l_extra, QStringLiteral("my-plugin")));
-
-    const auto l_stored = l_registry.spec("inspect");
-    QCOMPARE(l_stored->variants.size(), 2);
-    QCOMPARE(l_stored->match(1)->id, QStringLiteral("other"));
-    QCOMPARE(l_stored->match(1)->gate.permissions(), QStringList{QStringLiteral("my.permission")});
-}
-
-void tst_CommandRegistry::registerVariantRefusals()
-{
-    akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("core")));
-    l_registry.registerCommand({QStringLiteral("plain"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
-
-    const auto l_handler = [](akashi::CommandContext &) {};
-
-    // Unknown command.
-    QVERIFY(!l_registry.registerVariant(QStringLiteral("missing"), {QStringLiteral("x"), 0, 0, {}, {}, {}, l_handler}));
-
-    // A command without variants keeps its single handler reachable.
-    QVERIFY(!l_registry.registerVariant(QStringLiteral("plain"), {QStringLiteral("x"), 0, 0, {}, {}, {}, l_handler}));
-
-    // Duplicate id.
-    QVERIFY(!l_registry.registerVariant(QStringLiteral("listperms"), {QStringLiteral("own"), 2, 2, {}, {}, {}, l_handler}));
-
-    // The unbounded "user" form already covers two arguments.
-    QVERIFY(!l_registry.registerVariant(QStringLiteral("listperms"), {QStringLiteral("two"), 2, 2, {}, {}, {}, l_handler}));
-
-    QCOMPARE(l_registry.spec("listperms")->variants.size(), 2);
-}
-
-void tst_CommandRegistry::registerVariantRejectsMalformedForms()
-{
-    akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("core")));
-
-    const auto l_handler = [](akashi::CommandContext &) {};
-
-    // A form without an id or without a handler is refused.
-    QVERIFY(!l_registry.registerVariant(QStringLiteral("listperms"), {QString(), 2, 2, {}, {}, {}, l_handler}));
-    QVERIFY(!l_registry.registerVariant(QStringLiteral("listperms"), {QStringLiteral("mute"), 2, 2, {}, {}, {}, {}}));
-
-    // An unbounded window swallows every count above it, so nothing can
-    // sit beside the open-ended "user" form - not even far above it.
-    QVERIFY(!l_registry.registerVariant(QStringLiteral("listperms"), {QStringLiteral("many"), 5, -1, {}, {}, {}, l_handler}));
-
-    QCOMPARE(l_registry.spec("listperms")->variants.size(), 2);
-}
-
-void tst_CommandRegistry::unregisterAllSweepsAddedVariants()
-{
-    akashi::CommandRegistry l_registry;
-    const akashi::CommandSpec l_spec{
-        .name = QStringLiteral("inspect"),
-        .variants = {
-            {QStringLiteral("own"), 0, 0, {}, {}, {}, [](akashi::CommandContext &) {}},
-        },
-    };
-    QVERIFY(l_registry.registerCommand(l_spec, QStringLiteral("core")));
-    QVERIFY(l_registry.registerVariant(QStringLiteral("inspect"),
-                                       {QStringLiteral("other"), 1, 1, {}, {}, {}, [](akashi::CommandContext &) {}},
-                                       QStringLiteral("my-plugin")));
-
-    l_registry.unregisterAll(QStringLiteral("my-plugin"));
-
-    // The command survives; only the plugin's form is gone.
-    const auto l_stored = l_registry.spec("inspect");
-    QVERIFY(l_stored.has_value());
-    QCOMPARE(l_stored->variants.size(), 1);
-    QCOMPARE(l_stored->variants.first().id, QStringLiteral("own"));
-}
-
-void tst_CommandRegistry::applyExtensionsOverridesVariantPermissions()
-{
-    akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("core")));
-
-    QTemporaryDir l_dir;
-    QVERIFY(l_dir.isValid());
-    const QString l_path = l_dir.filePath(QStringLiteral("ext.json"));
-    QFile l_file(l_path);
-    QVERIFY(l_file.open(QIODevice::WriteOnly));
-    l_file.write(R"({"listperms.user": {"permissions": "super"}, "listperms.missing": {"permissions": "super"}, "listperms": {"permissions": "super"}})");
-    l_file.close();
-
-    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("gated forms"));
-    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("no variant"));
-    l_registry.applyExtensions(l_path);
-
-    const auto l_stored = l_registry.spec("listperms");
-    // The addressed form changed; the base override on a variant command
-    // only warns, and the other form keeps its gate.
-    QCOMPARE(l_stored->match(1)->gate.permissions(), QStringList{QStringLiteral("super")});
-    QVERIFY(l_stored->match(0)->gate.isEmpty());
-    QVERIFY(l_stored->gate.isEmpty());
 }
 
 } // namespace unittests
