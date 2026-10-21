@@ -4,6 +4,9 @@
 function(akashi_add_plugin name)
     cmake_parse_arguments(PLUGIN "" "" "SOURCES" ${ARGN})
     qt_add_plugin(${name} SHARED ${PLUGIN_SOURCES})
+    # Qt 6.4's qt_add_plugin drops the sources it is handed, leaving an
+    # empty library; adding them to the target works on every version.
+    target_sources(${name} PRIVATE ${PLUGIN_SOURCES})
     target_link_libraries(${name} PRIVATE akashi::akashi_pluginapi)
     target_compile_definitions(${name} PRIVATE QT_NO_KEYWORDS)
     set_target_properties(${name} PROPERTIES
