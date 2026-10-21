@@ -54,13 +54,13 @@ static QStringList buildAreaList(CommandContext &f_context, int f_area_index)
     return l_entries;
 }
 
-void cmdGetArea(CommandContext &f_context)
+void cmdGetArea(CommandContext &f_context, const Args &)
 {
     QStringList l_entries = buildAreaList(f_context, f_context.areaId());
     f_context.reply(l_entries.join("\n"));
 }
 
-void cmdGetAreas(CommandContext &f_context)
+void cmdGetAreas(CommandContext &f_context, const Args &)
 {
     ServerContext *l_server = f_context.server();
     QStringList l_entries;
@@ -73,31 +73,30 @@ void cmdGetAreas(CommandContext &f_context)
     f_context.reply(l_entries.join("\n"));
 }
 
-void cmdArea(CommandContext &f_context)
+void cmdArea(CommandContext &f_context, const Args &f_args)
 {
-    const auto l_new_area = helpers::parseInt(f_context.argument(0), QStringLiteral("area_id"), 0, f_context.server()->areaCount() - 1);
-    if (!l_new_area) {
-        f_context.reply(l_new_area.error());
+    akashi::ClientSession *l_client = f_context.self();
+    if (!l_client) {
         return;
     }
-    f_context.self()->changeArea(*l_new_area);
+    l_client->changeArea(f_args.number(QStringLiteral("area")));
 }
 
-void cmdCm(CommandContext &f_context)
+// /cm without a target. Claiming an area that has no CM is the form gated
+// on area.cm; the open form only says why there is nothing to claim.
+static void cmSelf(CommandContext &f_context, bool f_may_claim)
 {
-    QString l_sender_name = f_context.name();
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
     if (l_area->owners().isEmpty()) {
-        // Walk-in CM defaults closed: claiming an empty area needs the
-        // spec-declared escalation, area.cm, from somewhere - the area's
-        // own offer (an areas.json grants line opens the classic
-        // walk-in), a role, or super. The old protected-area hardcode is
-        // gone; a protected area is simply one that offers nothing.
-        if (!f_context.canPerform(f_context.escalatesTo())) {
+        // Walk-in CM defaults closed: the claim needs area.cm from
+        // somewhere - the area's own offer (an areas.json grants line
+        // opens the classic walk-in), a role, or super. A protected area
+        // is simply one that offers nothing.
+        if (!f_may_claim) {
             f_context.reply("This area does not offer CM. Ask a moderator, or check /why cm.");
             return;
         }
@@ -105,32 +104,54 @@ void cmdCm(CommandContext &f_context)
             f_context.reply(*l_refusal);
             return;
         }
-        f_context.replyToArea(l_sender_name + " is now CM in this area.");
+        f_context.replyToArea(f_context.name() + " is now CM in this area.");
     }
     else if (!l_area->owners().contains(f_context.clientId())) {
         f_context.reply("You cannot become a CM in this area when someone else is. You must be CM'ed by an existing one.");
-    }
-    else if (f_context.argc() == 1) {
-        akashi::ClientSession *l_owner_candidate = f_context.findClient(0);
-        if (!l_owner_candidate) {
-            return;
-        }
-        if (l_area->owners().contains(l_owner_candidate->clientId())) {
-            f_context.reply("User is already a CM in this area.");
-            return;
-        }
-        if (auto l_refusal = l_client->addAreaOwner(l_owner_candidate->clientId())) {
-            f_context.reply(*l_refusal);
-            return;
-        }
-        f_context.replyToArea(l_owner_candidate->name() + " is now CM in this area.");
     }
     else {
         f_context.reply("You are already a CM in this area.");
     }
 }
 
-void cmdUncmOwn(CommandContext &f_context)
+void cmdCmClaim(CommandContext &f_context, const Args &)
+{
+    cmSelf(f_context, true);
+}
+
+void cmdCm(CommandContext &f_context, const Args &)
+{
+    cmSelf(f_context, false);
+}
+
+void cmdCmAdd(CommandContext &f_context, const Args &f_args)
+{
+    akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
+    akashi::ClientSession *l_client = f_context.self();
+    if (!l_client) {
+        return;
+    }
+    if (l_area->owners().isEmpty()) {
+        f_context.reply("There are no CMs in this area. Claim it with /cm first.");
+        return;
+    }
+    if (!l_area->owners().contains(f_context.clientId())) {
+        f_context.reply("You cannot become a CM in this area when someone else is. You must be CM'ed by an existing one.");
+        return;
+    }
+    akashi::ClientSession *l_owner_candidate = f_args.client(QStringLiteral("target"));
+    if (l_area->owners().contains(l_owner_candidate->clientId())) {
+        f_context.reply("User is already a CM in this area.");
+        return;
+    }
+    if (auto l_refusal = l_client->addAreaOwner(l_owner_candidate->clientId())) {
+        f_context.reply(*l_refusal);
+        return;
+    }
+    f_context.replyToArea(l_owner_candidate->name() + " is now CM in this area.");
+}
+
+void cmdUncmOwn(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (l_area->owners().isEmpty()) {
@@ -153,7 +174,7 @@ void cmdUncmOwn(CommandContext &f_context)
     f_context.reply("You are no longer CM in this area.");
 }
 
-void cmdUncmOther(CommandContext &f_context)
+void cmdUncmAll(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (l_area->owners().isEmpty()) {
@@ -166,29 +187,37 @@ void cmdUncmOther(CommandContext &f_context)
         return;
     }
 
-    if (f_context.argument(0) == "all") {
-        QList<int> owners = l_area->owners();
-        for (int uid : owners) {
-            if (uid != f_context.clientId()) {
-                // A mid-loop block leaves the earlier removals applied.
-                if (auto l_refusal = l_client->removeAreaOwner(uid)) {
-                    f_context.reply(*l_refusal);
-                    return;
-                }
-                akashi::ClientSession *l_target = f_context.server()->clientById(uid);
-                if (l_target != nullptr) {
-                    l_target->sendServerMessage("You have been unCMed.");
-                }
+    const QList<int> l_owners = l_area->owners();
+    for (int l_uid : l_owners) {
+        if (l_uid != f_context.clientId()) {
+            // A mid-loop block leaves the earlier removals applied.
+            if (auto l_refusal = l_client->removeAreaOwner(l_uid)) {
+                f_context.reply(*l_refusal);
+                return;
+            }
+            akashi::ClientSession *l_target = f_context.server()->clientById(l_uid);
+            if (l_target != nullptr) {
+                l_target->sendServerMessage("You have been unCMed.");
             }
         }
-        f_context.reply("All CMs except yourself have been unCMed.");
+    }
+    f_context.reply("All CMs except yourself have been unCMed.");
+}
+
+void cmdUncmOther(CommandContext &f_context, const Args &f_args)
+{
+    akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
+    if (l_area->owners().isEmpty()) {
+        f_context.reply("There are no CMs in this area.");
         return;
     }
 
-    akashi::ClientSession *l_target = f_context.findClient(0);
-    if (!l_target) {
+    akashi::ClientSession *l_client = f_context.self();
+    if (!l_client) {
         return;
     }
+
+    akashi::ClientSession *l_target = f_args.client(QStringLiteral("target"));
     const int l_uid = l_target->clientId();
     if (!l_area->owners().contains(l_uid)) {
         f_context.reply("That user is not CMed.");
@@ -202,42 +231,33 @@ void cmdUncmOther(CommandContext &f_context)
     l_target->sendServerMessage("You have been unCMed by a moderator.");
 }
 
-void cmdInvite(CommandContext &f_context)
+void cmdInvite(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    akashi::ClientSession *target_client = f_context.findClient(0);
-    if (!target_client) {
-        return;
-    }
-    if (!l_area->invite(target_client->clientId())) {
+    akashi::ClientSession *l_target = f_args.client(QStringLiteral("target"));
+    if (!l_area->invite(l_target->clientId())) {
         f_context.reply("That ID is already on the invite list.");
         return;
     }
-    f_context.reply("You invited ID " + QString::number(target_client->clientId()));
-    target_client->sendServerMessage("You were invited and given access to " + l_area->name());
+    f_context.reply("You invited ID " + QString::number(l_target->clientId()));
+    l_target->sendServerMessage("You were invited and given access to " + l_area->name());
 }
 
-void cmdUninvite(CommandContext &f_context)
+// The target is already checked: not one of this area's CMs.
+void cmdUninvite(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    akashi::ClientSession *target_client = f_context.findClient(0);
-    if (!target_client) {
-        return;
-    }
-    const int l_uninvited_id = target_client->clientId();
-    if (f_context.targetIsImmune(l_uninvited_id)) {
-        f_context.reply("You cannot uninvite a CM!");
-        return;
-    }
-    else if (!l_area->uninvite(l_uninvited_id)) {
+    akashi::ClientSession *l_target = f_args.client(QStringLiteral("target"));
+    const int l_uninvited_id = l_target->clientId();
+    if (!l_area->uninvite(l_uninvited_id)) {
         f_context.reply("That ID is not on the invite list.");
         return;
     }
     f_context.reply("You uninvited ID " + QString::number(l_uninvited_id));
-    target_client->sendServerMessage("You were uninvited from " + l_area->name());
+    l_target->sendServerMessage("You were uninvited from " + l_area->name());
 }
 
-void cmdAreaLock(CommandContext &f_context)
+void cmdAreaLock(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (l_area->lockState() == akashi::Area::LockState::Locked) {
@@ -255,7 +275,7 @@ void cmdAreaLock(CommandContext &f_context)
     f_context.replyToArea("This area is now locked.");
 }
 
-void cmdAreaSpectate(CommandContext &f_context)
+void cmdAreaSpectate(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (l_area->lockState() == akashi::Area::LockState::Spectatable) {
@@ -273,7 +293,7 @@ void cmdAreaSpectate(CommandContext &f_context)
     f_context.replyToArea("This area is now spectatable.");
 }
 
-void cmdAreaUnlock(CommandContext &f_context)
+void cmdAreaUnlock(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (l_area->lockState() == akashi::Area::LockState::Free) {
@@ -325,7 +345,7 @@ static void cmdAreaKickAll(CommandContext &f_context, const Args &f_args)
     f_context.reply("All clients kicked to area " + f_context.server()->areaById(l_to)->displayName() + ".");
 }
 
-void cmdBackground(CommandContext &f_context)
+void cmdBackground(CommandContext &f_context, const Args &f_args)
 {
     akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
@@ -337,19 +357,19 @@ void cmdBackground(CommandContext &f_context)
     }
     // The verb owns the background rules, the validation, the BN broadcast,
     // the background's ambience and the area notice.
-    if (auto l_refusal = l_client->changeBackground(f_context.arguments().join(" "))) {
+    if (auto l_refusal = l_client->changeBackground(f_args.text(QStringLiteral("background")))) {
         f_context.reply(*l_refusal);
     }
 }
 
-void cmdSide(CommandContext &f_context)
+void cmdSide(CommandContext &f_context, const Args &f_args)
 {
     akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
     // The background lock is enforced by the check_background floor rule.
-    const QString l_side = f_context.arguments().join(" ");
+    const QString l_side = f_args.text(QStringLiteral("side"));
     if (auto l_refusal = l_client->changeBackgroundSide(l_side)) {
         f_context.reply(*l_refusal);
         return;
@@ -362,7 +382,7 @@ void cmdSide(CommandContext &f_context)
     }
 }
 
-void cmdLockBackground(CommandContext &f_context)
+void cmdLockBackground(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
 
@@ -373,7 +393,7 @@ void cmdLockBackground(CommandContext &f_context)
     f_context.server()->broadcast(akashi::Packet("CT", {f_context.server()->serverNickname(), f_context.character() + " locked the background.", "1"}), f_context.areaId());
 }
 
-void cmdUnlockBackground(CommandContext &f_context)
+void cmdUnlockBackground(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
 
@@ -384,7 +404,7 @@ void cmdUnlockBackground(CommandContext &f_context)
     f_context.server()->broadcast(akashi::Packet("CT", {f_context.server()->serverNickname(), f_context.character() + " unlocked the background.", "1"}), f_context.areaId());
 }
 
-void cmdStatus(CommandContext &f_context)
+void cmdStatus(CommandContext &f_context, const Args &f_args)
 {
     akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
@@ -392,12 +412,12 @@ void cmdStatus(CommandContext &f_context)
     }
     // The verb validates before it commits, so a blocked change needs no
     // rollback and a refused one sends no area update at all.
-    if (auto l_refusal = l_client->changeAreaStatus(f_context.argument(0))) {
+    if (auto l_refusal = l_client->changeAreaStatus(f_args.text(QStringLiteral("status")))) {
         f_context.reply(*l_refusal);
     }
 }
 
-void cmdJudgeLog(CommandContext &f_context)
+void cmdJudgeLog(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (l_area->judgelog().isEmpty()) {
@@ -415,7 +435,7 @@ void cmdJudgeLog(CommandContext &f_context)
     }
 }
 
-void cmdIgnoreBgList(CommandContext &f_context)
+void cmdIgnoreBgList(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     l_area->toggleIgnoreBgList();
@@ -423,19 +443,19 @@ void cmdIgnoreBgList(CommandContext &f_context)
     f_context.reply("BG list in this area is now " + l_state);
 }
 
-void cmdAreaMessage(CommandContext &f_context)
+void cmdAreaMessage(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    if (f_context.argc() == 0) {
+    if (!f_args.has(QStringLiteral("message"))) {
         f_context.reply(l_area->areaMessage());
         return;
     }
 
-    l_area->changeAreaMessage(f_context.arguments().join(" "));
+    l_area->changeAreaMessage(f_args.text(QStringLiteral("message")));
     f_context.reply("Updated this area's message.");
 }
 
-void cmdToggleMessage(CommandContext &f_context)
+void cmdToggleMessage(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     l_area->toggleAreaMessageJoin();
@@ -443,16 +463,16 @@ void cmdToggleMessage(CommandContext &f_context)
     f_context.reply("Sending message on area join is now " + l_state);
 }
 
-void cmdClearMessage(CommandContext &f_context)
+void cmdClearMessage(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     l_area->clearAreaMessage();
     if (l_area->sendAreaMessageOnJoin()) {
-        cmdToggleMessage(f_context);
+        cmdToggleMessage(f_context, f_args);
     }
 }
 
-void cmdToggleWtce(CommandContext &f_context)
+void cmdToggleWtce(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     l_area->toggleWtceAllowed();
@@ -460,7 +480,7 @@ void cmdToggleWtce(CommandContext &f_context)
     f_context.reply("Using testimony animations is now " + l_state);
 }
 
-void cmdToggleShouts(CommandContext &f_context)
+void cmdToggleShouts(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     l_area->toggleShoutAllowed();
@@ -468,12 +488,8 @@ void cmdToggleShouts(CommandContext &f_context)
     f_context.reply("Using shouts is now " + l_state);
 }
 
-void cmdFloors(CommandContext &f_context)
+void cmdFloors(CommandContext &f_context, const Args &)
 {
-    if (!f_context.arguments().isEmpty()) {
-        cmdFloor(f_context);
-        return;
-    }
     ServerContext *l_server = f_context.server();
     QStringList l_lines;
     l_lines.append("== Floors ==");
@@ -488,14 +504,16 @@ void cmdFloors(CommandContext &f_context)
     f_context.reply(l_lines.join("\n"));
 }
 
-void cmdFloor(CommandContext &f_context)
+// A floor by its ID, or else by its name.
+static const akashi::Floor *findFloor(ServerContext *f_server, const QString &f_text)
 {
-    ServerContext *l_server = f_context.server();
-    QString l_arg = f_context.argument(0);
+    const auto l_id = helpers::parseInt(f_text, QStringLiteral("floor_id"));
+    return l_id ? f_server->floorById(*l_id) : f_server->floorByName(f_text);
+}
 
-    const auto l_id = helpers::parseInt(l_arg, QStringLiteral("floor_id"));
-    const akashi::Floor *l_floor = l_id ? l_server->floorById(*l_id) : l_server->floorByName(l_arg);
-
+void cmdFloor(CommandContext &f_context, const Args &f_args)
+{
+    const akashi::Floor *l_floor = findFloor(f_context.server(), f_args.text(QStringLiteral("floor")));
     if (!l_floor) {
         f_context.reply("No floor found with that name or ID. Use /floors to list them.");
         return;
@@ -511,10 +529,10 @@ void cmdFloor(CommandContext &f_context)
     }
 }
 
-void cmdCreateArea(CommandContext &f_context)
+void cmdCreateArea(CommandContext &f_context, const Args &f_args)
 {
     ServerContext *l_server = f_context.server();
-    const QString l_name = f_context.arguments().join(" ");
+    const QString l_name = f_args.text(QStringLiteral("name"));
     const int l_floor_id = l_server->floorIdForArea(f_context.areaId());
     const int l_area_id = l_server->createArea(l_name, l_floor_id);
     if (l_area_id < 0) {
@@ -524,9 +542,9 @@ void cmdCreateArea(CommandContext &f_context)
     f_context.reply("Created area [" + QString::number(l_area_id) + "] " + l_name + " on this floor.");
 }
 
-void cmdCreateFloor(CommandContext &f_context)
+void cmdCreateFloor(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_name = f_context.arguments().join(" ");
+    const QString l_name = f_args.text(QStringLiteral("name"));
     const int l_floor_id = f_context.server()->createFloor(l_name);
     if (l_floor_id < 0) {
         f_context.reply("A floor with that name already exists, or the name is unusable.");
@@ -535,9 +553,9 @@ void cmdCreateFloor(CommandContext &f_context)
     f_context.reply("Created floor " + l_name + " with one starter area. Use /floor " + l_name + " to visit it.");
 }
 
-void cmdRenameArea(CommandContext &f_context)
+void cmdRenameArea(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_name = f_context.arguments().join(" ");
+    const QString l_name = f_args.text(QStringLiteral("name"));
     if (!f_context.server()->renameArea(f_context.areaId(), l_name)) {
         f_context.reply("That does not look like a usable area name.");
         return;
@@ -545,10 +563,10 @@ void cmdRenameArea(CommandContext &f_context)
     f_context.replyToArea("This area is now called " + l_name + ".");
 }
 
-void cmdRenameFloor(CommandContext &f_context)
+void cmdRenameFloor(CommandContext &f_context, const Args &f_args)
 {
     ServerContext *l_server = f_context.server();
-    const QString l_name = f_context.arguments().join(" ");
+    const QString l_name = f_args.text(QStringLiteral("name"));
     if (!l_server->renameFloor(l_server->floorIdForArea(f_context.areaId()), l_name)) {
         f_context.reply("A floor with that name already exists, or the name is unusable.");
         return;
@@ -556,12 +574,11 @@ void cmdRenameFloor(CommandContext &f_context)
     f_context.reply("This floor is now called " + l_name + ".");
 }
 
-void cmdRemoveArea(CommandContext &f_context)
+// One form gives the area's ID, the other its name.
+void cmdRemoveArea(CommandContext &f_context, const Args &f_args)
 {
     ServerContext *l_server = f_context.server();
-    // An ID, or else the whole line as an area name.
-    const auto l_id = helpers::parseInt(f_context.argument(0), QStringLiteral("area_id"));
-    const int l_area_id = l_id ? *l_id : l_server->areaNames().indexOf(f_context.arguments().join(" "));
+    const int l_area_id = f_args.has(QStringLiteral("area")) ? int(f_args.number(QStringLiteral("area"))) : l_server->areaNames().indexOf(f_args.text(QStringLiteral("name")));
     const QString l_name = l_server->areaName(l_area_id);
     if (auto l_error = l_server->removeArea(l_area_id)) {
         f_context.reply(*l_error);
@@ -570,11 +587,10 @@ void cmdRemoveArea(CommandContext &f_context)
     f_context.reply("Removed area " + l_name + ".");
 }
 
-void cmdRemoveFloor(CommandContext &f_context)
+void cmdRemoveFloor(CommandContext &f_context, const Args &f_args)
 {
     ServerContext *l_server = f_context.server();
-    const auto l_id = helpers::parseInt(f_context.argument(0), QStringLiteral("floor_id"));
-    const akashi::Floor *l_floor = l_id ? l_server->floorById(*l_id) : l_server->floorByName(f_context.arguments().join(" "));
+    const akashi::Floor *l_floor = findFloor(l_server, f_args.text(QStringLiteral("floor")));
     if (!l_floor) {
         f_context.reply("No floor found with that name or ID. Use /floors to list them.");
         return;
@@ -587,7 +603,7 @@ void cmdRemoveFloor(CommandContext &f_context)
     f_context.reply("Removed floor " + l_name + " and its areas.");
 }
 
-void cmdSaveWorld(CommandContext &f_context)
+void cmdSaveWorld(CommandContext &f_context, const Args &)
 {
     if (auto l_error = f_context.server()->saveWorld()) {
         f_context.reply("Unable to save: " + *l_error);
@@ -596,7 +612,7 @@ void cmdSaveWorld(CommandContext &f_context)
     f_context.reply("Saved the floors, areas and their rules to areas.json.");
 }
 
-void cmdLoadWorld(CommandContext &f_context)
+void cmdLoadWorld(CommandContext &f_context, const Args &)
 {
     if (auto l_error = f_context.server()->reloadWorld()) {
         f_context.reply("Unable to reload: " + *l_error);
@@ -605,13 +621,12 @@ void cmdLoadWorld(CommandContext &f_context)
     f_context.replyToServer("The floors and areas were reloaded from areas.json.");
 }
 
-void cmdSaveFloor(CommandContext &f_context)
+void cmdSaveFloor(CommandContext &f_context, const Args &f_args)
 {
     ServerContext *l_server = f_context.server();
     int l_floor_id = l_server->floorIdForArea(f_context.areaId());
-    if (f_context.argc() > 0) {
-        const auto l_id = helpers::parseInt(f_context.argument(0), QStringLiteral("floor_id"));
-        const akashi::Floor *l_floor = l_id ? l_server->floorById(*l_id) : l_server->floorByName(f_context.arguments().join(" "));
+    if (f_args.has(QStringLiteral("floor"))) {
+        const akashi::Floor *l_floor = findFloor(l_server, f_args.text(QStringLiteral("floor")));
         if (!l_floor) {
             f_context.reply("No floor found with that name or ID. Use /floors to list them.");
             return;
@@ -626,9 +641,9 @@ void cmdSaveFloor(CommandContext &f_context)
     f_context.reply("Saved floor " + l_name + " to config/floors. Load it with /loadfloor " + l_name + ".");
 }
 
-void cmdLoadFloor(CommandContext &f_context)
+void cmdLoadFloor(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_name = f_context.arguments().join(" ");
+    const QString l_name = f_args.text(QStringLiteral("name"));
     if (auto l_error = f_context.server()->loadFloor(l_name)) {
         f_context.reply("Unable to load: " + *l_error);
         return;
@@ -636,7 +651,7 @@ void cmdLoadFloor(CommandContext &f_context)
     f_context.reply("Loaded floor " + l_name + " from its file.");
 }
 
-void cmdWebfiles(CommandContext &f_context)
+void cmdWebfiles(CommandContext &f_context, const Args &)
 {
     const QVector<akashi::ClientSession *> l_clients = f_context.server()->clients();
     QStringList l_weblinks;
@@ -654,67 +669,50 @@ void cmdWebfiles(CommandContext &f_context)
 
 void registerAreaCommands(CommandRegistry &f_registry)
 {
-    f_registry.registerCommand(
-        {QStringLiteral("getarea"), {QStringLiteral("ga")}, {akashi::permission::area_getarea}, 0, QStringLiteral("/getarea"), QStringLiteral("Lists all clients in the area you are in.")},
-        cmdGetArea, QStringLiteral("core"));
+    using namespace akashi::permission;
+    const QString l_core = QStringLiteral("core");
+    const Param l_target = param::client(QStringLiteral("target"));
+    const Param l_name = param::text(QStringLiteral("name"));
+    // A floor by its ID or its name.
+    const Param l_floor = param::text(QStringLiteral("floor"));
 
-    f_registry.registerCommand(
-        {QStringLiteral("getareas"), {QStringLiteral("gas")}, {akashi::permission::area_getareas}, 0, QStringLiteral("/getareas"), QStringLiteral("Lists all clients in all areas.")},
-        cmdGetAreas, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("area"), {}, {akashi::permission::area_area}, 1, QStringLiteral("/area <id>"), QStringLiteral("Moves you to the area with the given ID.")},
-        cmdArea, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("getarea"), {area_getarea}, {}, QStringLiteral("Lists all clients in the area you are in."), cmdGetArea, {QStringLiteral("ga")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("getareas"), {area_getareas}, {}, QStringLiteral("Lists all clients in all areas."), cmdGetAreas, {QStringLiteral("gas")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("area"), {area_area}, {param::area(QStringLiteral("area"))}, QStringLiteral("Moves you to the area with the given ID."), cmdArea), l_core);
 
     {
-        // The walk-in claim is a declared escalation, so /why and /help
-        // tell the truth about it instead of a gate hiding in the body.
+        // Claiming an area that has no CM is its own form, gated on
+        // area.cm, so /why and /help show it. Without area.cm the bare
+        // /cm falls to the open form, which says why not.
         CommandSpec l_cm;
         l_cm.name = QStringLiteral("cm");
-        l_cm.gate = {akashi::permission::user};
-        l_cm.usage = QStringLiteral("/cm [id]");
         l_cm.description = QStringLiteral("Claims CM or adds another client as CM.");
-        l_cm.escalates_to = akashi::permission::area_cm;
-        l_cm.escalates_when = QStringLiteral("claiming an empty area");
-        f_registry.registerCommand(l_cm, cmdCm, QStringLiteral("core"));
+        l_cm.variants = {
+            {.id = QStringLiteral("claim"), .gate = {area_cm}, .description = QStringLiteral("Claims CM in an area that has none."), .run = cmdCmClaim},
+            {.id = QStringLiteral("add"), .gate = {user}, .description = QStringLiteral("Adds another client as CM of your area."), .params = {l_target}, .run = cmdCmAdd},
+            {.id = QStringLiteral("own"), .gate = {user}, .description = QStringLiteral("Says why you cannot claim CM here."), .run = cmdCm},
+        };
+        f_registry.registerCommand(l_cm, l_core);
     }
-
-    CommandSpec l_uncm;
-    l_uncm.name = QStringLiteral("uncm");
-    l_uncm.usage = QStringLiteral("/uncm [id|all]");
-    l_uncm.description = QStringLiteral("Removes CM status from yourself or another client.");
-    l_uncm.variants = {
-        {QStringLiteral("own"), 0, 0, {akashi::permission::area_cm}, QStringLiteral("/uncm"), QStringLiteral("Removes your own CM status."), cmdUncmOwn},
-        {QStringLiteral("other"), 1, -1, {akashi::permission::area_uncm}, QStringLiteral("/uncm <id|all>"), QStringLiteral("Removes another client's CM status, or every CM's except yours."), cmdUncmOther},
-    };
-    f_registry.registerCommand(l_uncm, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("invite"), {}, {akashi::permission::cm_invite}, 1, QStringLiteral("/invite <id>"), QStringLiteral("Invites a client to the area.")},
-        cmdInvite, QStringLiteral("core"));
 
     {
-        CommandSpec l_uninvite;
-        l_uninvite.name = QStringLiteral("uninvite");
-        l_uninvite.gate = {akashi::permission::cm_uninvite};
-        l_uninvite.min_args = 1;
-        l_uninvite.usage = QStringLiteral("/uninvite <id>");
-        l_uninvite.description = QStringLiteral("Removes a client from the area invite list.");
-        l_uninvite.target_immune_if = akashi::permission::area_cm;
-        f_registry.registerCommand(l_uninvite, cmdUninvite, QStringLiteral("core"));
+        CommandSpec l_uncm;
+        l_uncm.name = QStringLiteral("uncm");
+        l_uncm.description = QStringLiteral("Removes CM status from yourself or another client.");
+        l_uncm.variants = {
+            {.id = QStringLiteral("own"), .gate = {area_cm}, .description = QStringLiteral("Removes your own CM status."), .run = cmdUncmOwn},
+            {.id = QStringLiteral("all"), .gate = {area_uncm}, .description = QStringLiteral("Removes every CM's status except yours."), .params = {param::word(QStringLiteral("who"), {QStringLiteral("all")})}, .run = cmdUncmAll},
+            {.id = QStringLiteral("other"), .gate = {area_uncm}, .description = QStringLiteral("Removes another client's CM status."), .params = {l_target}, .run = cmdUncmOther},
+        };
+        f_registry.registerCommand(l_uncm, l_core);
     }
 
-    f_registry.registerCommand(
-        {QStringLiteral("area_lock"), {QStringLiteral("lock_area"), QStringLiteral("lock")}, {akashi::permission::cm_lock}, 0, QStringLiteral("/area_lock"), QStringLiteral("Locks the area so only invited clients may enter.")},
-        cmdAreaLock, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("area_spectate"), {QStringLiteral("spectatable")}, {akashi::permission::cm_spectate}, 0, QStringLiteral("/area_spectate"), QStringLiteral("Sets the area to spectate-only mode.")},
-        cmdAreaSpectate, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("area_unlock"), {QStringLiteral("unlock_area"), QStringLiteral("unlock")}, {akashi::permission::cm_unlock}, 0, QStringLiteral("/area_unlock"), QStringLiteral("Unlocks the area.")},
-        cmdAreaUnlock, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("invite"), {cm_invite}, {l_target}, QStringLiteral("Invites a client to the area."), cmdInvite), l_core);
+    // The CMs of an area are immune to its uninvites.
+    f_registry.registerCommand(singleForm(QStringLiteral("uninvite"), {cm_uninvite}, {param::client(QStringLiteral("target")).immuneIfAreaOwner()}, QStringLiteral("Removes a client from the area invite list."), cmdUninvite), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("area_lock"), {cm_lock}, {}, QStringLiteral("Locks the area so only invited clients may enter."), cmdAreaLock, {QStringLiteral("lock_area"), QStringLiteral("lock")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("area_spectate"), {cm_spectate}, {}, QStringLiteral("Sets the area to spectate-only mode."), cmdAreaSpectate, {QStringLiteral("spectatable")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("area_unlock"), {cm_unlock}, {}, QStringLiteral("Unlocks the area."), cmdAreaUnlock, {QStringLiteral("unlock_area"), QStringLiteral("unlock")}), l_core);
 
     {
         // The cross-area form needs gamemaster AND kick - an all-of group,
@@ -728,115 +726,65 @@ void registerAreaCommands(CommandRegistry &f_registry)
         const Param l_target = param::client(QStringLiteral("target")).inArea().immuneIfAreaOwner();
         const Param l_all = param::word(QStringLiteral("who"), {QStringLiteral("all")});
         const Param l_destination = param::area(QStringLiteral("destination"));
-        const Gate l_cross_area = Gate::allOf({akashi::permission::area_cm, akashi::permission::kick});
+        const Gate l_cross_area = Gate::allOf({area_cm, kick});
         l_area_kick.variants = {
-            {.id = QStringLiteral("one"), .gate = {akashi::permission::cm_kick}, .description = QStringLiteral("Kicks a client to the first area."), .params = {l_target}, .run = cmdAreaKickOne},
-            {.id = QStringLiteral("all"), .gate = {akashi::permission::cm_kick}, .description = QStringLiteral("Kicks everyone but the CMs to the first area."), .params = {l_all}, .run = cmdAreaKickAll},
+            {.id = QStringLiteral("one"), .gate = {cm_kick}, .description = QStringLiteral("Kicks a client to the first area."), .params = {l_target}, .run = cmdAreaKickOne},
+            {.id = QStringLiteral("all"), .gate = {cm_kick}, .description = QStringLiteral("Kicks everyone but the CMs to the first area."), .params = {l_all}, .run = cmdAreaKickAll},
             {.id = QStringLiteral("one_to"), .gate = l_cross_area, .description = QStringLiteral("Kicks a client to a specific area."), .params = {l_target, l_destination}, .run = cmdAreaKickOne},
             {.id = QStringLiteral("all_to"), .gate = l_cross_area, .description = QStringLiteral("Kicks everyone but the CMs to a specific area."), .params = {l_all, l_destination}, .run = cmdAreaKickAll},
         };
-        f_registry.registerCommand(l_area_kick, QStringLiteral("core"));
+        f_registry.registerCommand(l_area_kick, l_core);
     }
 
-    f_registry.registerCommand(
-        {QStringLiteral("background"), {QStringLiteral("bg")}, {akashi::permission::area_background}, 1, QStringLiteral("/background <name>"), QStringLiteral("Changes the background of the area.")},
-        cmdBackground, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("background"), {area_background}, {param::text(QStringLiteral("background"))}, QStringLiteral("Changes the background of the area."), cmdBackground, {QStringLiteral("bg")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("side"), {cm_side}, {param::text(QStringLiteral("side")).optional()}, QStringLiteral("Locks or unlocks the background side."), cmdSide), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("lock_background"), {cm_lock_background}, {}, QStringLiteral("Locks the background in the area."), cmdLockBackground, {QStringLiteral("lock_bg"), QStringLiteral("lockbg"), QStringLiteral("bglock")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("unlock_background"), {cm_unlock_background}, {}, QStringLiteral("Unlocks the background in the area."), cmdUnlockBackground, {QStringLiteral("unlock_bg"), QStringLiteral("unlockbg"), QStringLiteral("bgunlock")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("status"), {area_status}, {param::token(QStringLiteral("status"))}, QStringLiteral("Changes the status of the area."), cmdStatus), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("judgelog"), {cm_judgelog}, {}, QStringLiteral("Displays the judge log for the area."), cmdJudgeLog), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("ignore_bglist"), {ignore_background_list}, {}, QStringLiteral("Toggles whether the background list is enforced."), cmdIgnoreBgList, {QStringLiteral("ignorebglist")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("areamessage"), {cm_areamessage}, {param::text(QStringLiteral("message")).optional()}, QStringLiteral("Views or sets the area message."), cmdAreaMessage), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("togglemessage"), {cm_togglemessage}, {}, QStringLiteral("Toggles sending the area message on join."), cmdToggleMessage), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("clearmessage"), {cm_clearmessage}, {}, QStringLiteral("Clears the area message."), cmdClearMessage), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("toggle_wtce"), {cm_toggle_wtce}, {}, QStringLiteral("Toggles testimony animations in the area."), cmdToggleWtce, {QStringLiteral("togglewtce")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("toggle_shouts"), {cm_toggle_shouts}, {}, QStringLiteral("Toggles shouts in the area."), cmdToggleShouts, {QStringLiteral("toggleshouts")}), l_core);
 
-    f_registry.registerCommand(
-        {QStringLiteral("side"), {}, {akashi::permission::cm_side}, 0, QStringLiteral("/side [name]"), QStringLiteral("Locks or unlocks the background side.")},
-        cmdSide, QStringLiteral("core"));
+    {
+        // /floors with a floor visits it, as /floor does.
+        CommandSpec l_floors;
+        l_floors.name = QStringLiteral("floors");
+        l_floors.description = QStringLiteral("Lists all floors and their areas.");
+        l_floors.variants = {
+            {.id = QStringLiteral("list"), .gate = {area_floors}, .description = QStringLiteral("Lists all floors and their areas."), .run = cmdFloors},
+            {.id = QStringLiteral("visit"), .gate = {area_floors}, .description = QStringLiteral("Moves you to the first area on the given floor."), .params = {l_floor}, .run = cmdFloor},
+        };
+        f_registry.registerCommand(l_floors, l_core);
+    }
 
-    f_registry.registerCommand(
-        {QStringLiteral("lock_background"), {QStringLiteral("lock_bg"), QStringLiteral("lockbg"), QStringLiteral("bglock")}, {akashi::permission::cm_lock_background}, 0, QStringLiteral("/lock_background"), QStringLiteral("Locks the background in the area.")},
-        cmdLockBackground, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("floor"), {area_floor}, {l_floor}, QStringLiteral("Moves you to the first area on the given floor."), cmdFloor), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("createarea"), {modify_floors}, {l_name}, QStringLiteral("Creates a new area on this floor."), cmdCreateArea), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("createfloor"), {modify_floors}, {l_name}, QStringLiteral("Creates a new floor with one starter area."), cmdCreateFloor), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("renamearea"), {modify_floors}, {l_name}, QStringLiteral("Renames the area you are in."), cmdRenameArea), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("renamefloor"), {modify_floors}, {l_name}, QStringLiteral("Renames the floor you are on."), cmdRenameFloor), l_core);
 
-    f_registry.registerCommand(
-        {QStringLiteral("unlock_background"), {QStringLiteral("unlock_bg"), QStringLiteral("unlockbg"), QStringLiteral("bgunlock")}, {akashi::permission::cm_unlock_background}, 0, QStringLiteral("/unlock_background"), QStringLiteral("Unlocks the background in the area.")},
-        cmdUnlockBackground, QStringLiteral("core"));
+    {
+        // An area ID picks the area; anything else is read as its name.
+        CommandSpec l_removearea;
+        l_removearea.name = QStringLiteral("removearea");
+        l_removearea.description = QStringLiteral("Removes an empty area; later area IDs shift down.");
+        l_removearea.variants = {
+            {.id = QStringLiteral("id"), .gate = {modify_floors}, .description = QStringLiteral("Removes the area with the given ID."), .params = {param::area(QStringLiteral("area"))}, .run = cmdRemoveArea},
+            {.id = QStringLiteral("name"), .gate = {modify_floors}, .description = QStringLiteral("Removes the area with the given name."), .params = {l_name}, .run = cmdRemoveArea},
+        };
+        f_registry.registerCommand(l_removearea, l_core);
+    }
 
-    f_registry.registerCommand(
-        {QStringLiteral("status"), {}, {akashi::permission::area_status}, 1, QStringLiteral("/status <status>"), QStringLiteral("Changes the status of the area.")},
-        cmdStatus, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("judgelog"), {}, {akashi::permission::cm_judgelog}, 0, QStringLiteral("/judgelog"), QStringLiteral("Displays the judge log for the area.")},
-        cmdJudgeLog, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("ignore_bglist"), {QStringLiteral("ignorebglist")}, {akashi::permission::ignore_background_list}, 0, QStringLiteral("/ignore_bglist"), QStringLiteral("Toggles whether the background list is enforced.")},
-        cmdIgnoreBgList, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("areamessage"), {}, {akashi::permission::cm_areamessage}, 0, QStringLiteral("/areamessage [message]"), QStringLiteral("Views or sets the area message.")},
-        cmdAreaMessage, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("togglemessage"), {}, {akashi::permission::cm_togglemessage}, 0, QStringLiteral("/togglemessage"), QStringLiteral("Toggles sending the area message on join.")},
-        cmdToggleMessage, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("clearmessage"), {}, {akashi::permission::cm_clearmessage}, 0, QStringLiteral("/clearmessage"), QStringLiteral("Clears the area message.")},
-        cmdClearMessage, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("toggle_wtce"), {QStringLiteral("togglewtce")}, {akashi::permission::cm_toggle_wtce}, 0, QStringLiteral("/toggle_wtce"), QStringLiteral("Toggles testimony animations in the area.")},
-        cmdToggleWtce, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("toggle_shouts"), {QStringLiteral("toggleshouts")}, {akashi::permission::cm_toggle_shouts}, 0, QStringLiteral("/toggle_shouts"), QStringLiteral("Toggles shouts in the area.")},
-        cmdToggleShouts, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("floors"), {}, {akashi::permission::area_floors}, 0, QStringLiteral("/floors"), QStringLiteral("Lists all floors and their areas.")},
-        cmdFloors, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("floor"), {}, {akashi::permission::area_floor}, 1, QStringLiteral("/floor <name|id>"), QStringLiteral("Moves you to the first area on the given floor.")},
-        cmdFloor, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("createarea"), {}, {akashi::permission::modify_floors}, 1, QStringLiteral("/createarea <name>"), QStringLiteral("Creates a new area on this floor.")},
-        cmdCreateArea, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("createfloor"), {}, {akashi::permission::modify_floors}, 1, QStringLiteral("/createfloor <name>"), QStringLiteral("Creates a new floor with one starter area.")},
-        cmdCreateFloor, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("renamearea"), {}, {akashi::permission::modify_floors}, 1, QStringLiteral("/renamearea <name>"), QStringLiteral("Renames the area you are in.")},
-        cmdRenameArea, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("renamefloor"), {}, {akashi::permission::modify_floors}, 1, QStringLiteral("/renamefloor <name>"), QStringLiteral("Renames the floor you are on.")},
-        cmdRenameFloor, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("removearea"), {}, {akashi::permission::modify_floors}, 1, QStringLiteral("/removearea <id|name>"), QStringLiteral("Removes an empty area; later area IDs shift down.")},
-        cmdRemoveArea, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("removefloor"), {}, {akashi::permission::modify_floors}, 1, QStringLiteral("/removefloor <id|name>"), QStringLiteral("Removes a floor whose areas are all empty.")},
-        cmdRemoveFloor, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("saveworld"), {QStringLiteral("saveareas")}, {akashi::permission::modify_floors}, 0, QStringLiteral("/saveworld"), QStringLiteral("Saves every floor, area and their rules to areas.json.")},
-        cmdSaveWorld, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("loadworld"), {QStringLiteral("loadareas")}, {akashi::permission::modify_floors}, 0, QStringLiteral("/loadworld"), QStringLiteral("Rebuilds every floor and area from areas.json.")},
-        cmdLoadWorld, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("savefloor"), {}, {akashi::permission::modify_floors}, 0, QStringLiteral("/savefloor [name|id]"), QStringLiteral("Saves one floor to its own file under config/floors.")},
-        cmdSaveFloor, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("loadfloor"), {}, {akashi::permission::modify_floors}, 1, QStringLiteral("/loadfloor <name>"), QStringLiteral("Loads a floor file, replacing a same-named floor or adding a new one.")},
-        cmdLoadFloor, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("webfiles"), {}, {akashi::permission::area_webfiles}, 0, QStringLiteral("/webfiles"), QStringLiteral("Lists download links for iniswapped characters.")},
-        cmdWebfiles, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("removefloor"), {modify_floors}, {l_floor}, QStringLiteral("Removes a floor whose areas are all empty."), cmdRemoveFloor), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("saveworld"), {modify_floors}, {}, QStringLiteral("Saves every floor, area and their rules to areas.json."), cmdSaveWorld, {QStringLiteral("saveareas")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("loadworld"), {modify_floors}, {}, QStringLiteral("Rebuilds every floor and area from areas.json."), cmdLoadWorld, {QStringLiteral("loadareas")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("savefloor"), {modify_floors}, {l_floor.optional()}, QStringLiteral("Saves one floor to its own file under config/floors."), cmdSaveFloor), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("loadfloor"), {modify_floors}, {l_name}, QStringLiteral("Loads a floor file, replacing a same-named floor or adding a new one."), cmdLoadFloor), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("webfiles"), {area_webfiles}, {}, QStringLiteral("Lists download links for iniswapped characters."), cmdWebfiles), l_core);
 }
 
 } // namespace akashi::commands

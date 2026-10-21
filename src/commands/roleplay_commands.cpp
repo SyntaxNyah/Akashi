@@ -63,7 +63,7 @@ static QString areaTimer(CommandContext &f_context, int f_area_idx, int f_timer_
     return l_name + " is inactive.";
 }
 
-void cmdCoinFlip(CommandContext &f_context)
+void cmdCoinFlip(CommandContext &f_context, const Args &)
 {
     QString l_sender_name = f_context.name();
     QStringList l_faces = {"heads", "tails"};
@@ -71,52 +71,28 @@ void cmdCoinFlip(CommandContext &f_context)
     f_context.replyToArea(l_sender_name + " flipped a coin and got " + l_face + ".");
 }
 
-// /roll and /rollp share one reader: either dice notation ("2d6+1") or
-// the plain form "[sides] [dice]", both bounded by the server's limits.
-static void rollDice(CommandContext &f_context, bool f_private)
+// /roll and /rollp share one body: either dice notation ("2d6+1") or the
+// plain form "[sides] [count]", both read within the server's limits.
+static void rollDice(CommandContext &f_context, const Args &f_args, bool f_private)
 {
-    const int l_max_sides = f_context.server()->serverSettings()->max_value();
-    const int l_max_dice = f_context.server()->serverSettings()->max_dice();
-
-    if (f_context.argc() >= 1 && f_context.argument(0).contains(QLatin1Char('d'), Qt::CaseInsensitive)) {
-        const auto l_dice = helpers::parseDice(f_context.argument(0), l_max_dice, l_max_sides);
-        if (!l_dice) {
-            f_context.reply(l_dice.error());
-            return;
-        }
-        diceThrower(f_context, l_dice->sides, l_dice->count, f_private, l_dice->modifier);
+    if (f_args.has(QStringLiteral("dice"))) {
+        const helpers::Dice l_dice = f_args.dice(QStringLiteral("dice"));
+        diceThrower(f_context, l_dice.sides, l_dice.count, f_private, l_dice.modifier);
         return;
     }
-
-    int l_sides = 6;
-    int l_dice = 1;
-    if (f_context.argc() >= 1) {
-        const auto l_parsed = helpers::parseInt(f_context.argument(0), QStringLiteral("dice_sides"), 1, l_max_sides);
-        if (!l_parsed) {
-            f_context.reply(l_parsed.error());
-            return;
-        }
-        l_sides = *l_parsed;
-    }
-    if (f_context.argc() >= 2) {
-        const auto l_parsed = helpers::parseInt(f_context.argument(1), QStringLiteral("dice_count"), 1, l_max_dice);
-        if (!l_parsed) {
-            f_context.reply(l_parsed.error());
-            return;
-        }
-        l_dice = *l_parsed;
-    }
+    const int l_sides = f_args.has(QStringLiteral("dice_sides")) ? int(f_args.number(QStringLiteral("dice_sides"))) : 6;
+    const int l_dice = f_args.has(QStringLiteral("dice_count")) ? int(f_args.number(QStringLiteral("dice_count"))) : 1;
     diceThrower(f_context, l_sides, l_dice, f_private);
 }
 
-void cmdRoll(CommandContext &f_context)
+void cmdRoll(CommandContext &f_context, const Args &f_args)
 {
-    rollDice(f_context, false);
+    rollDice(f_context, f_args, false);
 }
 
-void cmdRollA(CommandContext &f_context)
+void cmdRollA(CommandContext &f_context, const Args &f_args)
 {
-    QString l_dice_name = f_context.arguments().join(" ");
+    QString l_dice_name = f_args.text(QStringLiteral("name"));
 
     if (f_context.server()->diceFaces(l_dice_name).isEmpty()) {
         qCWarning(akashiCommands) << "Unknown dice.";
@@ -129,16 +105,16 @@ void cmdRollA(CommandContext &f_context)
     }
 }
 
-void cmdRollP(CommandContext &f_context)
+void cmdRollP(CommandContext &f_context, const Args &f_args)
 {
-    rollDice(f_context, true);
+    rollDice(f_context, f_args, true);
 }
 
-void cmdTimer(CommandContext &f_context)
+void cmdTimer(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
 
-    if (f_context.argc() == 0) {
+    if (!f_args.has(QStringLiteral("timer_id"))) {
         QStringList l_timers;
         l_timers.append("Currently active timers:");
         for (int i = 0; i <= 4; i++) {
@@ -148,30 +124,16 @@ void cmdTimer(CommandContext &f_context)
         return;
     }
 
-    const auto l_parsed_id = helpers::parseInt(f_context.argument(0), QStringLiteral("timer_id"), 0, 4);
-    if (!l_parsed_id) {
-        f_context.reply(l_parsed_id.error());
-        return;
-    }
-    const int l_timer_id = *l_parsed_id;
+    // Timer 0 is the server-wide one; altering it is a form of its own,
+    // gated on timer.global as well.
+    const int l_timer_id = int(f_args.number(QStringLiteral("timer_id")));
 
-    if (f_context.argc() == 1) {
+    if (!f_args.has(QStringLiteral("time")) && !f_args.has(QStringLiteral("action"))) {
         f_context.reply(areaTimer(f_context, l_area->id(), l_timer_id));
         return;
     }
 
-    QTimer *l_requested_timer;
-    if (l_timer_id == 0) {
-        // Timer 0 is the server-wide one: the spec declares the
-        // escalation, so /help shows it.
-        if (!f_context.canPerform(f_context.escalatesTo())) {
-            f_context.reply("You are not authorized to alter the global timer.");
-            return;
-        }
-        l_requested_timer = f_context.server()->timer;
-    }
-    else
-        l_requested_timer = l_area->timers().at(l_timer_id - 1);
+    QTimer *l_requested_timer = l_timer_id == 0 ? f_context.server()->timer : l_area->timers().at(l_timer_id - 1);
 
     bool l_is_global = l_timer_id == 0;
     // Every timer packet leaves through the shared TI builders.
@@ -179,47 +141,51 @@ void cmdTimer(CommandContext &f_context)
         l_is_global ? f_context.server()->broadcast(f_packet) : f_context.server()->broadcast(f_packet, f_context.areaId());
     };
 
-    QTime l_requested_time = QTime::fromString(f_context.argument(1), "hh:mm:ss");
-    if (l_requested_time.isValid()) {
+    if (f_args.has(QStringLiteral("time"))) {
+        const QString l_time_text = f_args.text(QStringLiteral("time"));
+        QTime l_requested_time = QTime::fromString(l_time_text, "hh:mm:ss");
+        if (!l_requested_time.isValid()) {
+            f_context.reply("Could not read \"" + l_time_text + "\" as a time. Use hh:mm:ss, like 00:05:00.");
+            return;
+        }
         l_requested_timer->setInterval(QTime(0, 0).msecsTo(l_requested_time));
         l_requested_timer->start();
-        f_context.reply("Set timer " + QString::number(l_timer_id) + " to " + f_context.argument(1) + ".");
+        f_context.reply("Set timer " + QString::number(l_timer_id) + " to " + l_time_text + ".");
         l_send(akashi::timerShow(l_timer_id));
         l_send(akashi::timerValue(l_timer_id, QTime(0, 0).msecsTo(l_requested_time)));
         return;
     }
-    else {
-        QString l_action = f_context.argument(1);
-        if (l_action == "start") {
-            l_requested_timer->start();
-            f_context.reply("Started timer " + QString::number(l_timer_id) + ".");
-            l_send(akashi::timerShow(l_timer_id));
-            l_send(akashi::timerValue(l_timer_id, QTime(0, 0).msecsTo(QTime(0, 0).addMSecs(l_requested_timer->remainingTime()))));
-        }
-        else if (l_action == "pause" || l_action == "stop") {
-            l_requested_timer->setInterval(l_requested_timer->remainingTime());
-            l_requested_timer->stop();
-            f_context.reply("Stopped timer " + QString::number(l_timer_id) + ".");
-            l_send(akashi::timerValue(l_timer_id, QTime(0, 0).msecsTo(QTime(0, 0).addMSecs(l_requested_timer->interval())), true));
-        }
-        else if (l_action == "hide" || l_action == "unset") {
-            l_requested_timer->setInterval(0);
-            l_requested_timer->stop();
-            f_context.reply("Hid timer " + QString::number(l_timer_id) + ".");
-            l_send(akashi::timerHide(l_timer_id));
-        }
+
+    const QString l_action = f_args.text(QStringLiteral("action"));
+    if (l_action == "start") {
+        l_requested_timer->start();
+        f_context.reply("Started timer " + QString::number(l_timer_id) + ".");
+        l_send(akashi::timerShow(l_timer_id));
+        l_send(akashi::timerValue(l_timer_id, QTime(0, 0).msecsTo(QTime(0, 0).addMSecs(l_requested_timer->remainingTime()))));
+    }
+    else if (l_action == "pause" || l_action == "stop") {
+        l_requested_timer->setInterval(l_requested_timer->remainingTime());
+        l_requested_timer->stop();
+        f_context.reply("Stopped timer " + QString::number(l_timer_id) + ".");
+        l_send(akashi::timerValue(l_timer_id, QTime(0, 0).msecsTo(QTime(0, 0).addMSecs(l_requested_timer->interval())), true));
+    }
+    else if (l_action == "hide" || l_action == "unset") {
+        l_requested_timer->setInterval(0);
+        l_requested_timer->stop();
+        f_context.reply("Hid timer " + QString::number(l_timer_id) + ".");
+        l_send(akashi::timerHide(l_timer_id));
     }
 }
 
-void cmdNotecard(CommandContext &f_context)
+void cmdNotecard(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    QString l_notecard = f_context.arguments().join(" ");
+    QString l_notecard = f_args.text(QStringLiteral("message"));
     l_area->addNotecard(f_context.character(), l_notecard);
     f_context.replyToArea(f_context.character() + " wrote a note card.");
 }
 
-void cmdNotecardClear(CommandContext &f_context)
+void cmdNotecardClear(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (!l_area->addNotecard(f_context.character(), QString())) {
@@ -227,7 +193,7 @@ void cmdNotecardClear(CommandContext &f_context)
     }
 }
 
-void cmdNotecardReveal(CommandContext &f_context)
+void cmdNotecardReveal(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     const QStringList l_notecards = l_area->takeNotecards();
@@ -243,7 +209,7 @@ void cmdNotecardReveal(CommandContext &f_context)
     f_context.replyToArea(l_message);
 }
 
-void cmd8Ball(CommandContext &f_context)
+void cmd8Ball(CommandContext &f_context, const Args &f_args)
 {
     if (f_context.server()->magic8BallAnswers().isEmpty()) {
         qCWarning(akashiCommands) << "8ball.txt is empty!";
@@ -252,14 +218,14 @@ void cmd8Ball(CommandContext &f_context)
     else {
         QString l_response = f_context.server()->magic8BallAnswers().at(CommandContext::genRand(1, f_context.server()->magic8BallAnswers().size() - 1));
         QString l_sender_name = f_context.name();
-        QString l_sender_message = f_context.arguments().join(" ");
+        QString l_sender_message = f_args.text(QStringLiteral("question"));
         f_context.replyToArea(l_sender_name + " asked the magic 8-ball, \"" + l_sender_message + "\" and the answer is: " + l_response);
     }
 }
 
-void cmdSubtheme(CommandContext &f_context)
+void cmdSubtheme(CommandContext &f_context, const Args &f_args)
 {
-    QString l_subtheme = f_context.arguments().join(" ");
+    QString l_subtheme = f_args.text(QStringLiteral("name"));
     const QVector<akashi::ClientSession *> l_clients = f_context.server()->clients();
     for (akashi::ClientSession *l_client : l_clients) {
         if (l_client->areaId() == f_context.areaId())
@@ -268,27 +234,71 @@ void cmdSubtheme(CommandContext &f_context)
     f_context.replyToArea("Subtheme was set to " + l_subtheme);
 }
 
-void registerRoleplayCommands(CommandRegistry &f_registry)
+void registerRoleplayCommands(CommandRegistry &f_registry, const ServerSettings &f_settings)
 {
-    f_registry.registerCommand({"coinflip", {}, {permission::roleplay_coinflip}, 0, "/coinflip", "Flips a coin for the area to see."}, cmdCoinFlip, "core");
-    f_registry.registerCommand({"roll", {"r"}, {permission::roleplay_roll}, 0, "/roll [dice] [faces]", "Rolls dice for the area to see."}, cmdRoll, "core");
-    f_registry.registerCommand({"rolla", {}, {permission::roleplay_rolla}, 0, "/rolla <name>", "Rolls a named die from the dice config."}, cmdRollA, "core");
-    f_registry.registerCommand({"rollp", {}, {permission::roleplay_rollp}, 0, "/rollp [dice] [faces]", "Rolls dice only you and the moderators see."}, cmdRollP, "core");
+    using namespace akashi::permission;
+    const QString l_core = QStringLiteral("core");
+
+    // The dice limits are read from the live settings each time a roll is
+    // read, so a reload takes effect at once.
+    const ServerSettings *l_settings = &f_settings;
+    const Param::Limit l_max_dice = [l_settings](const ParamScope &) { return qint64(l_settings->max_dice()); };
+    const Param::Limit l_max_sides = [l_settings](const ParamScope &) { return qint64(l_settings->max_value()); };
+    // A bare roll is one six-sided die; "/roll 20 2" is two d20s; "/roll 2d20+1" is notation.
+    const QList<Param> l_plain{param::integer(QStringLiteral("dice_sides"), 1, 0).max(l_max_sides).optional(),
+                               param::integer(QStringLiteral("dice_count"), 1, 0).max(l_max_dice).optional()};
+    const QList<Param> l_notation{param::dice(QStringLiteral("dice"), l_max_dice, l_max_sides)};
+
+    f_registry.registerCommand(singleForm(QStringLiteral("coinflip"), {roleplay_coinflip}, {}, QStringLiteral("Flips a coin for the area to see."), cmdCoinFlip), l_core);
     {
+        CommandSpec l_roll;
+        l_roll.name = QStringLiteral("roll");
+        l_roll.aliases = {QStringLiteral("r")};
+        l_roll.description = QStringLiteral("Rolls dice for the area to see.");
+        l_roll.variants = {
+            {.id = QStringLiteral("plain"), .gate = {roleplay_roll}, .description = QStringLiteral("Rolls dice with that many sides, one six-sided die by default."), .params = l_plain, .run = cmdRoll},
+            {.id = QStringLiteral("notation"), .gate = {roleplay_roll}, .description = QStringLiteral("Rolls dice notation such as 2d6+1."), .params = l_notation, .run = cmdRoll},
+        };
+        f_registry.registerCommand(l_roll, l_core);
+    }
+    f_registry.registerCommand(singleForm(QStringLiteral("rolla"), {roleplay_rolla}, {param::text(QStringLiteral("name"))}, QStringLiteral("Rolls a named die from the dice config."), cmdRollA), l_core);
+    {
+        CommandSpec l_rollp;
+        l_rollp.name = QStringLiteral("rollp");
+        l_rollp.description = QStringLiteral("Rolls dice only you and the moderators see.");
+        l_rollp.variants = {
+            {.id = QStringLiteral("plain"), .gate = {roleplay_rollp}, .description = QStringLiteral("Rolls dice with that many sides, one six-sided die by default."), .params = l_plain, .run = cmdRollP},
+            {.id = QStringLiteral("notation"), .gate = {roleplay_rollp}, .description = QStringLiteral("Rolls dice notation such as 2d6+1."), .params = l_notation, .run = cmdRollP},
+        };
+        f_registry.registerCommand(l_rollp, l_core);
+    }
+    {
+        // The ordinary forms take timers 1-4; altering timer 0, the
+        // server-wide one, is its own form that also needs timer.global.
+        // Viewing timer 0 needs nothing extra.
+        const Param l_area_timer = param::integer(QStringLiteral("timer_id"), 1, 4);
+        const Param l_global_timer = param::integer(QStringLiteral("timer_id"), 0, 0);
+        const Param l_time = param::token(QStringLiteral("time"));
+        const Param l_action = param::word(QStringLiteral("action"), {QStringLiteral("start"), QStringLiteral("pause"), QStringLiteral("stop"), QStringLiteral("hide"), QStringLiteral("unset")});
+        const Gate l_global = Gate::allOf({cm_timer, timer_global});
         CommandSpec l_timer;
         l_timer.name = QStringLiteral("timer");
-        l_timer.gate = {permission::cm_timer};
-        l_timer.usage = QStringLiteral("/timer [id] [time|start|pause|hide]");
         l_timer.description = QStringLiteral("Shows or controls the area's timers.");
-        l_timer.escalates_to = permission::timer_global;
-        l_timer.escalates_when = QStringLiteral("altering timer 0, the server-wide one");
-        f_registry.registerCommand(l_timer, cmdTimer, QStringLiteral("core"));
+        l_timer.variants = {
+            {.id = QStringLiteral("list"), .gate = {cm_timer}, .description = QStringLiteral("Shows every timer."), .params = {}, .run = cmdTimer},
+            {.id = QStringLiteral("show"), .gate = {cm_timer}, .description = QStringLiteral("Shows one timer."), .params = {param::integer(QStringLiteral("timer_id"), 0, 4)}, .run = cmdTimer},
+            {.id = QStringLiteral("action"), .gate = {cm_timer}, .description = QStringLiteral("Starts, pauses or hides an area timer."), .params = {l_area_timer, l_action}, .run = cmdTimer},
+            {.id = QStringLiteral("set"), .gate = {cm_timer}, .description = QStringLiteral("Sets an area timer to a time like 00:05:00."), .params = {l_area_timer, l_time}, .run = cmdTimer},
+            {.id = QStringLiteral("global_action"), .gate = l_global, .description = QStringLiteral("Starts, pauses or hides the server-wide timer."), .params = {l_global_timer, l_action}, .run = cmdTimer},
+            {.id = QStringLiteral("global_set"), .gate = l_global, .description = QStringLiteral("Sets the server-wide timer to a time like 00:05:00."), .params = {l_global_timer, l_time}, .run = cmdTimer},
+        };
+        f_registry.registerCommand(l_timer, l_core);
     }
-    f_registry.registerCommand({"notecard", {}, {permission::roleplay_notecard}, 1, "/notecard <message>", "Writes your hidden notecard."}, cmdNotecard, "core");
-    f_registry.registerCommand({"notecard_clear", {"clear_notecard", "notecardclear"}, {permission::roleplay_notecard_clear}, 0, "/notecard_clear", "Clears your notecard."}, cmdNotecardClear, "core");
-    f_registry.registerCommand({"notecard_reveal", {"reveal_notecard", "notecardreveal"}, {permission::cm_notecard_reveal}, 0, "/notecard_reveal", "Reveals every notecard in the area."}, cmdNotecardReveal, "core");
-    f_registry.registerCommand({"8ball", {}, {permission::roleplay_8ball}, 1, "/8ball <question>", "Asks the magic 8-ball a question."}, cmd8Ball, "core");
-    f_registry.registerCommand({"subtheme", {}, {permission::cm_subtheme}, 1, "/subtheme <name>", "Switches the area's client subtheme."}, cmdSubtheme, "core");
+    f_registry.registerCommand(singleForm(QStringLiteral("notecard"), {roleplay_notecard}, {param::text(QStringLiteral("message"))}, QStringLiteral("Writes your hidden notecard."), cmdNotecard), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("notecard_clear"), {roleplay_notecard_clear}, {}, QStringLiteral("Clears your notecard."), cmdNotecardClear, {QStringLiteral("clear_notecard"), QStringLiteral("notecardclear")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("notecard_reveal"), {cm_notecard_reveal}, {}, QStringLiteral("Reveals every notecard in the area."), cmdNotecardReveal, {QStringLiteral("reveal_notecard"), QStringLiteral("notecardreveal")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("8ball"), {roleplay_8ball}, {param::text(QStringLiteral("question"))}, QStringLiteral("Asks the magic 8-ball a question."), cmd8Ball), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("subtheme"), {cm_subtheme}, {param::text(QStringLiteral("name"))}, QStringLiteral("Switches the area's client subtheme."), cmdSubtheme), l_core);
 }
 
 } // namespace akashi::commands

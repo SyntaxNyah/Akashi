@@ -551,20 +551,6 @@ void cmdAbout(CommandContext &f_context, const Args &f_args)
     f_context.sendPacket("CT", {"The akashi dev team", l_sections.join("\n\n")});
 }
 
-bool applySanction(CommandContext &f_context, TargetPlayer &f_target, const QString &f_sanction_id, const QString &f_data)
-{
-    std::optional<QDateTime> l_until = std::nullopt;
-    if (f_context.argc() > 1) {
-        const QString l_text = QStringList(f_context.arguments().mid(1)).join(QLatin1Char(' '));
-        l_until = akashi::parseWhen(l_text, QDateTime::currentDateTime());
-        if (!l_until.has_value()) {
-            f_context.reply(helpers::ParseError(helpers::ParseError::NotATime, l_text, QStringLiteral("until")));
-            return false;
-        }
-    }
-    return applySanctionUntil(f_context, f_target, f_sanction_id, l_until, f_data);
-}
-
 bool applySanctionUntil(CommandContext &f_context, TargetPlayer &f_target, const QString &f_sanction_id, const std::optional<QDateTime> &f_until, const QString &f_data)
 {
     // Staff protection lives at administration time, the one spot that
@@ -597,8 +583,7 @@ void liftSanction(CommandContext &f_context, TargetPlayer &f_target, const QStri
     f_context.server()->removeSanction(f_target.ipid(), f_sanction_id);
 }
 
-// The optional "until" of a sanction command, already read as a moment.
-static std::optional<QDateTime> untilOf(const Args &f_args)
+std::optional<QDateTime> untilOf(const Args &f_args)
 {
     if (!f_args.has(QStringLiteral("until")))
         return std::nullopt;

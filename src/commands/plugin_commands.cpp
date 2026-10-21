@@ -3,6 +3,7 @@
 #include "akashi/permissions.h"
 #include "akashi/service_registry.h"
 #include "core/command_context.h"
+#include "core/command_params.h"
 #include "core/command_registry.h"
 #include "core/plugin_manager.h"
 
@@ -35,7 +36,7 @@ static PluginManager *resolveManager(CommandContext &f_ctx)
     return l_mgr.get();
 }
 
-static void listSubcommand(CommandContext &f_ctx)
+void cmdPluginList(CommandContext &f_ctx, const Args &)
 {
     PluginManager *l_mgr = resolveManager(f_ctx);
     if (!l_mgr)
@@ -61,13 +62,13 @@ static void listSubcommand(CommandContext &f_ctx)
     f_ctx.reply(l_lines.join(QStringLiteral("\n")));
 }
 
-static void loadSubcommand(CommandContext &f_ctx)
+void cmdPluginLoad(CommandContext &f_ctx, const Args &f_args)
 {
     PluginManager *l_mgr = resolveManager(f_ctx);
     if (!l_mgr)
         return;
 
-    const QString l_id = f_ctx.argument(1);
+    const QString l_id = f_args.text(QStringLiteral("id"));
     if (l_mgr->loadPlugin(l_id)) {
         const auto l_info = l_mgr->pluginInfo(l_id);
         f_ctx.reply(QStringLiteral("Plugin loaded: ") + l_id + (l_info ? QStringLiteral(" v") + l_info->version.toString() : QString()));
@@ -77,14 +78,14 @@ static void loadSubcommand(CommandContext &f_ctx)
     }
 }
 
-static void unloadSubcommand(CommandContext &f_ctx)
+void cmdPluginUnload(CommandContext &f_ctx, const Args &f_args)
 {
     PluginManager *l_mgr = resolveManager(f_ctx);
     if (!l_mgr)
         return;
 
-    const QString l_id = f_ctx.argument(1);
-    bool l_cascade = f_ctx.argc() > 2 && f_ctx.argument(2) == QStringLiteral("--cascade");
+    const QString l_id = f_args.text(QStringLiteral("id"));
+    const bool l_cascade = f_args.has(QStringLiteral("cascade"));
 
     if (l_mgr->unloadPlugin(l_id, l_cascade))
         f_ctx.reply(QStringLiteral("Plugin unloaded: ") + l_id);
@@ -92,13 +93,13 @@ static void unloadSubcommand(CommandContext &f_ctx)
         f_ctx.reply(QStringLiteral("Failed to unload plugin: ") + l_id + QStringLiteral(". Other plugins may depend on it (use --cascade)."));
 }
 
-static void reloadSubcommand(CommandContext &f_ctx)
+void cmdPluginReload(CommandContext &f_ctx, const Args &f_args)
 {
     PluginManager *l_mgr = resolveManager(f_ctx);
     if (!l_mgr)
         return;
 
-    const QString l_id = f_ctx.argument(1);
+    const QString l_id = f_args.text(QStringLiteral("id"));
     if (l_mgr->reloadPlugin(l_id)) {
         const auto l_info = l_mgr->pluginInfo(l_id);
         f_ctx.reply(QStringLiteral("Plugin reloaded: ") + l_id + (l_info ? QStringLiteral(" v") + l_info->version.toString() : QString()));
@@ -108,36 +109,23 @@ static void reloadSubcommand(CommandContext &f_ctx)
     }
 }
 
-void cmdPlugin(CommandContext &f_context)
-{
-    if (f_context.argc() < 1) {
-        f_context.reply(QStringLiteral("Usage: /plugin <list|load|unload|reload> [id] [--cascade]"));
-        return;
-    }
-
-    const QString l_sub = f_context.argument(0);
-    if (l_sub == QStringLiteral("list"))
-        listSubcommand(f_context);
-    else if (l_sub == QStringLiteral("load"))
-        loadSubcommand(f_context);
-    else if (l_sub == QStringLiteral("unload"))
-        unloadSubcommand(f_context);
-    else if (l_sub == QStringLiteral("reload"))
-        reloadSubcommand(f_context);
-    else
-        f_context.reply(QStringLiteral("Unknown subcommand: ") + l_sub + QStringLiteral(". Use list, load, unload, or reload."));
-}
-
 void registerPluginCommands(CommandRegistry &f_registry)
 {
+    const Gate l_gate = {permission::super};
+    const Param l_id = param::token(QStringLiteral("id"));
+    const auto l_sub = [](const QString &f_word) { return param::word(QStringLiteral("subcommand"), {f_word}); };
+
     CommandSpec l_spec;
     l_spec.name = QStringLiteral("plugin");
-    l_spec.gate = {permission::super};
-    l_spec.min_args = 1;
-    l_spec.usage = QStringLiteral("/plugin <list|load|unload|reload> [id] [--cascade]");
     l_spec.description = QStringLiteral("Manage server plugins.");
+    l_spec.variants = {
+        {.id = QStringLiteral("list"), .gate = l_gate, .description = QStringLiteral("Lists the discovered plugins and their state."), .params = {l_sub(QStringLiteral("list"))}, .run = cmdPluginList},
+        {.id = QStringLiteral("load"), .gate = l_gate, .description = QStringLiteral("Loads a plugin."), .params = {l_sub(QStringLiteral("load")), l_id}, .run = cmdPluginLoad},
+        {.id = QStringLiteral("unload"), .gate = l_gate, .description = QStringLiteral("Unloads a plugin; --cascade also unloads the plugins depending on it."), .params = {l_sub(QStringLiteral("unload")), l_id, param::word(QStringLiteral("cascade"), {QStringLiteral("--cascade")}).optional()}, .run = cmdPluginUnload},
+        {.id = QStringLiteral("reload"), .gate = l_gate, .description = QStringLiteral("Reloads a plugin."), .params = {l_sub(QStringLiteral("reload")), l_id}, .run = cmdPluginReload},
+    };
 
-    f_registry.registerCommand(l_spec, cmdPlugin, QStringLiteral("core"));
+    f_registry.registerCommand(l_spec, QStringLiteral("core"));
 }
 
 } // namespace akashi::commands

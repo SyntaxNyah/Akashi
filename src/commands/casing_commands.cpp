@@ -13,6 +13,8 @@
 #include "proto/packet.h"
 #include "world/area.h"
 
+#include <limits>
+
 namespace akashi::commands {
 
 // Command handlers dispatch area events through the invoking client.
@@ -34,9 +36,9 @@ static std::optional<QString> checkCasingBeforeRule(CommandContext &f_context, c
     return std::nullopt;
 }
 
-void cmdDoc(CommandContext &f_context)
+void cmdDoc(CommandContext &f_context, const Args &f_args)
 {
-    if (f_context.argc() == 0) {
+    if (!f_args.has(QStringLiteral("text"))) {
         f_context.reply("Document: " + f_context.server()->areaById(f_context.areaId())->document());
         return;
     }
@@ -44,12 +46,12 @@ void cmdDoc(CommandContext &f_context)
     if (!l_client) {
         return;
     }
-    if (auto l_refusal = l_client->changeDocument(f_context.arguments().join(" "))) {
+    if (auto l_refusal = l_client->changeDocument(f_args.text(QStringLiteral("text")))) {
         f_context.reply(*l_refusal);
     }
 }
 
-void cmdClearDoc(CommandContext &f_context)
+void cmdClearDoc(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
@@ -60,31 +62,24 @@ void cmdClearDoc(CommandContext &f_context)
     }
 }
 
-void cmdEvidenceMod(CommandContext &f_context)
+void cmdEvidenceMod(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    const QString l_mod = f_context.argument(0).toLower();
-    akashi::EvidenceStore::Access l_access;
-    QString l_access_name;
-    if (l_mod == "cm") {
+    // The word arrives in its declared spelling; hiddencm is the old name.
+    const QString l_mod = f_args.text(QStringLiteral("mod"));
+    akashi::EvidenceStore::Access l_access = akashi::EvidenceStore::Access::FreeForAll;
+    QString l_access_name = QStringLiteral("ffa");
+    if (l_mod == QLatin1String("cm")) {
         l_access = akashi::EvidenceStore::Access::Cm;
         l_access_name = QStringLiteral("cm");
     }
-    else if (l_mod == "mod") {
+    else if (l_mod == QLatin1String("mod")) {
         l_access = akashi::EvidenceStore::Access::Mod;
         l_access_name = QStringLiteral("mod");
     }
-    else if (l_mod == "hidden_cm" || l_mod == "hiddencm") {
+    else if (l_mod == QLatin1String("hidden_cm") || l_mod == QLatin1String("hiddencm")) {
         l_access = akashi::EvidenceStore::Access::HiddenCm;
         l_access_name = QStringLiteral("hidden_cm");
-    }
-    else if (l_mod == "ffa") {
-        l_access = akashi::EvidenceStore::Access::FreeForAll;
-        l_access_name = QStringLiteral("ffa");
-    }
-    else {
-        f_context.reply("Invalid evidence mod.");
-        return;
     }
 
     // Changing who may touch the evidence is an edit of the record.
@@ -101,7 +96,7 @@ void cmdEvidenceMod(CommandContext &f_context)
     runCasingAfterRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload);
 }
 
-void cmdEvidenceSwap(CommandContext &f_context)
+void cmdEvidenceSwap(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     int l_ev_size = l_area->evidence().size() - 1;
@@ -111,18 +106,15 @@ void cmdEvidenceSwap(CommandContext &f_context)
         return;
     }
 
-    const auto l_first = helpers::parseInt(f_context.argument(0), QStringLiteral("evidence_id"), 0, l_ev_size);
-    if (!l_first) {
-        f_context.reply(l_first.error());
-        return;
+    // The ids are declared as numbers; how many pieces exist is only known here.
+    const int l_ev_id1 = int(f_args.number(QStringLiteral("evidence_id")));
+    const int l_ev_id2 = int(f_args.number(QStringLiteral("other_evidence_id")));
+    for (const int l_id : {l_ev_id1, l_ev_id2}) {
+        if (l_id > l_ev_size) {
+            f_context.reply(helpers::ParseError(helpers::ParseError::OutOfRange, QString::number(l_id), QStringLiteral("evidence_id"), 0, l_ev_size).errorString());
+            return;
+        }
     }
-    const auto l_second = helpers::parseInt(f_context.argument(1), QStringLiteral("evidence_id"), 0, l_ev_size);
-    if (!l_second) {
-        f_context.reply(l_second.error());
-        return;
-    }
-    const int l_ev_id1 = *l_first;
-    const int l_ev_id2 = *l_second;
 
     const QVariantMap l_payload = {{QStringLiteral("indexes"), QVariantList{l_ev_id1, l_ev_id2}}};
     if (auto l_rule_block = checkCasingBeforeRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload)) {
@@ -135,7 +127,7 @@ void cmdEvidenceSwap(CommandContext &f_context)
     runCasingAfterRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload);
 }
 
-void cmdTestify(CommandContext &f_context)
+void cmdTestify(CommandContext &f_context, const Args &)
 {
     akashi::TestimonyRecorder *l_recorder = f_context.server()->areaById(f_context.areaId())->testimonyRecorder();
     if (l_recorder->state() == akashi::TestimonyRecorder::State::Recording) {
@@ -148,7 +140,7 @@ void cmdTestify(CommandContext &f_context)
     }
 }
 
-void cmdExamine(CommandContext &f_context)
+void cmdExamine(CommandContext &f_context, const Args &)
 {
     akashi::TestimonyRecorder *l_recorder = f_context.server()->areaById(f_context.areaId())->testimonyRecorder();
     if (l_recorder->statementCount() - 1 > 0) {
@@ -168,7 +160,7 @@ void cmdExamine(CommandContext &f_context)
     }
 }
 
-void cmdTestimony(CommandContext &f_context)
+void cmdTestimony(CommandContext &f_context, const Args &)
 {
     akashi::TestimonyRecorder *l_recorder = f_context.server()->areaById(f_context.areaId())->testimonyRecorder();
     if (l_recorder->statementCount() - 1 < 1) {
@@ -183,7 +175,7 @@ void cmdTestimony(CommandContext &f_context)
     f_context.reply(l_ooc_message);
 }
 
-void cmdDelete(CommandContext &f_context)
+void cmdDelete(CommandContext &f_context, const Args &)
 {
     akashi::TestimonyRecorder *l_recorder = f_context.server()->areaById(f_context.areaId())->testimonyRecorder();
     const int l_c_statement = l_recorder->statementIndex();
@@ -196,20 +188,20 @@ void cmdDelete(CommandContext &f_context)
     }
 }
 
-void cmdUpdate(CommandContext &f_context)
+void cmdUpdate(CommandContext &f_context, const Args &)
 {
     f_context.server()->areaById(f_context.areaId())->testimonyRecorder()->setState(akashi::TestimonyRecorder::State::Update);
     f_context.reply("The next IC-Message will replace the currently selected testimony line.");
 }
 
-void cmdPause(CommandContext &f_context)
+void cmdPause(CommandContext &f_context, const Args &)
 {
     f_context.server()->areaById(f_context.areaId())->testimonyRecorder()->setState(akashi::TestimonyRecorder::State::Stopped);
     f_context.server()->broadcast(akashi::Packet("RT", {"testimony1", "1"}), f_context.areaId());
     f_context.reply("Testimony has been stopped. Use /examine to begin cross-examination.");
 }
 
-void cmdAdd(CommandContext &f_context)
+void cmdAdd(CommandContext &f_context, const Args &)
 {
     akashi::TestimonyRecorder *l_recorder = f_context.server()->areaById(f_context.areaId())->testimonyRecorder();
     if (l_recorder->statementIndex() < f_context.server()->serverSettings()->maximum_statements()) {
@@ -221,7 +213,7 @@ void cmdAdd(CommandContext &f_context)
     }
 }
 
-void cmdSaveTestimony(CommandContext &f_context)
+void cmdSaveTestimony(CommandContext &f_context, const Args &f_args)
 {
     // The gate is the spec's save_testimony requirement; /permitsaving
     // hands that permission to a person as a grant, so no session flag
@@ -232,7 +224,7 @@ void cmdSaveTestimony(CommandContext &f_context)
         return;
     }
 
-    const std::optional<QString> l_testimony_name = akashi::FileSystemService::sanitizedFileName(f_context.argument(0));
+    const std::optional<QString> l_testimony_name = akashi::FileSystemService::sanitizedFileName(f_args.text(QStringLiteral("name")));
     const std::optional<QString> l_path =
         l_testimony_name ? f_context.server()->fileSystem()->resolve(akashi::FileSystemService::Scope::Storage, "testimony/" + *l_testimony_name + ".txt") : std::nullopt;
     if (!l_path) {
@@ -255,7 +247,7 @@ void cmdSaveTestimony(CommandContext &f_context)
     f_context.reply("Testimony saved. To load it use /loadtestimony " + *l_testimony_name);
 }
 
-void cmdLoadTestimony(CommandContext &f_context)
+void cmdLoadTestimony(CommandContext &f_context, const Args &f_args)
 {
     QDir l_dir_testimony("storage/testimony");
     if (!l_dir_testimony.exists()) {
@@ -263,7 +255,7 @@ void cmdLoadTestimony(CommandContext &f_context)
         return;
     }
 
-    const std::optional<QString> l_testimony_name = akashi::FileSystemService::sanitizedFileName(f_context.argument(0));
+    const std::optional<QString> l_testimony_name = akashi::FileSystemService::sanitizedFileName(f_args.text(QStringLiteral("name")));
     const std::optional<QString> l_path =
         l_testimony_name ? f_context.server()->fileSystem()->resolve(akashi::FileSystemService::Scope::Storage, "testimony/" + *l_testimony_name + ".txt") : std::nullopt;
     if (!l_path) {
@@ -308,57 +300,39 @@ void cmdLoadTestimony(CommandContext &f_context)
 
 void registerCasingCommands(CommandRegistry &f_registry)
 {
-    f_registry.registerCommand(
-        {QStringLiteral("doc"), {}, {akashi::permission::casing_doc}, 0, QStringLiteral("/doc [text]"), QStringLiteral("Views or sets the document for the area.")},
-        cmdDoc, QStringLiteral("core"));
+    using namespace akashi::permission;
+    const QString l_core = QStringLiteral("core");
+    const Param l_name = param::token(QStringLiteral("name"));
 
-    f_registry.registerCommand(
-        {QStringLiteral("cleardoc"), {}, {akashi::permission::casing_cleardoc}, 0, QStringLiteral("/cleardoc"), QStringLiteral("Clears the document in the area.")},
-        cmdClearDoc, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("evidence_mod"), {}, {akashi::permission::modify_evidence}, 1, QStringLiteral("/evidence_mod <mod>"), QStringLiteral("Changes the evidence mod in the area.")},
-        cmdEvidenceMod, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("evidence_swap"), {}, {akashi::permission::cm_evidence_swap}, 2, QStringLiteral("/evidence_swap <id1> <id2>"), QStringLiteral("Swaps two pieces of evidence in the area.")},
-        cmdEvidenceSwap, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("testify"), {}, {akashi::permission::cm_testify}, 0, QStringLiteral("/testify"), QStringLiteral("Starts testimony recording.")},
-        cmdTestify, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("examine"), {}, {akashi::permission::cm_examine}, 0, QStringLiteral("/examine"), QStringLiteral("Starts testimony playback.")},
-        cmdExamine, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("testimony"), {}, {akashi::permission::casing_testimony}, 0, QStringLiteral("/testimony"), QStringLiteral("Lists the statements in the current testimony.")},
-        cmdTestimony, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("delete"), {}, {akashi::permission::cm_delete}, 0, QStringLiteral("/delete"), QStringLiteral("Deletes the currently selected testimony statement.")},
-        cmdDelete, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("update"), {}, {akashi::permission::cm_update}, 0, QStringLiteral("/update"), QStringLiteral("Replaces the current testimony statement with the next IC message.")},
-        cmdUpdate, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("pause"), {QStringLiteral("end")}, {akashi::permission::cm_pause}, 0, QStringLiteral("/pause"), QStringLiteral("Pauses testimony recording or playback.")},
-        cmdPause, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("add"), {}, {akashi::permission::cm_add}, 0, QStringLiteral("/add"), QStringLiteral("Inserts a new statement after the current one.")},
-        cmdAdd, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("savetestimony"), {}, {akashi::permission::save_testimony}, 1, QStringLiteral("/savetestimony <name>"), QStringLiteral("Saves the current testimony to a file.")},
-        cmdSaveTestimony, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("loadtestimony"), {}, {akashi::permission::cm_loadtestimony}, 1, QStringLiteral("/loadtestimony <name>"), QStringLiteral("Loads a saved testimony for playback.")},
-        cmdLoadTestimony, QStringLiteral("core"));
+    {
+        CommandSpec l_doc;
+        l_doc.name = QStringLiteral("doc");
+        l_doc.description = QStringLiteral("Views or sets the document for the area.");
+        l_doc.variants = {
+            {.id = QStringLiteral("view"), .gate = {casing_doc}, .description = QStringLiteral("Shows the document."), .params = {}, .run = cmdDoc},
+            {.id = QStringLiteral("set"), .gate = {casing_doc}, .description = QStringLiteral("Sets the document."), .params = {param::text(QStringLiteral("text"))}, .run = cmdDoc},
+        };
+        f_registry.registerCommand(l_doc, l_core);
+    }
+    f_registry.registerCommand(singleForm(QStringLiteral("cleardoc"), {casing_cleardoc}, {}, QStringLiteral("Clears the document in the area."), cmdClearDoc), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("evidence_mod"), {modify_evidence},
+                                          {param::word(QStringLiteral("mod"), {QStringLiteral("cm"), QStringLiteral("mod"), QStringLiteral("hidden_cm"), QStringLiteral("hiddencm"), QStringLiteral("ffa")})},
+                                          QStringLiteral("Changes the evidence mod in the area."), cmdEvidenceMod),
+                               l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("evidence_swap"), {cm_evidence_swap},
+                                          {param::integer(QStringLiteral("evidence_id"), 0, std::numeric_limits<int>::max()),
+                                           param::integer(QStringLiteral("other_evidence_id"), 0, std::numeric_limits<int>::max())},
+                                          QStringLiteral("Swaps two pieces of evidence in the area."), cmdEvidenceSwap),
+                               l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("testify"), {cm_testify}, {}, QStringLiteral("Starts testimony recording."), cmdTestify), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("examine"), {cm_examine}, {}, QStringLiteral("Starts testimony playback."), cmdExamine), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("testimony"), {casing_testimony}, {}, QStringLiteral("Lists the statements in the current testimony."), cmdTestimony), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("delete"), {cm_delete}, {}, QStringLiteral("Deletes the currently selected testimony statement."), cmdDelete), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("update"), {cm_update}, {}, QStringLiteral("Replaces the current testimony statement with the next IC message."), cmdUpdate), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("pause"), {cm_pause}, {}, QStringLiteral("Pauses testimony recording or playback."), cmdPause, {QStringLiteral("end")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("add"), {cm_add}, {}, QStringLiteral("Inserts a new statement after the current one."), cmdAdd), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("savetestimony"), {save_testimony}, {l_name}, QStringLiteral("Saves the current testimony to a file."), cmdSaveTestimony), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("loadtestimony"), {cm_loadtestimony}, {l_name}, QStringLiteral("Loads a saved testimony for playback."), cmdLoadTestimony), l_core);
 }
 
 } // namespace akashi::commands

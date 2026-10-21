@@ -3,6 +3,7 @@
 #include "akashi/log_event.h"
 #include "akashi/permissions.h"
 #include "core/command_context.h"
+#include "core/command_params.h"
 #include "core/command_registry.h"
 #include "core/log_service.h"
 #include "core/server_context.h"
@@ -52,11 +53,11 @@ void logRuleChange(CommandContext &f_context, const QString &f_command, const QS
 
 // Turns "message=No talking in court" into {message: "No talking in court"};
 // a token without '=' continues the value of the key before it.
-QVariantMap parseRuleArgs(const QStringList &f_tokens)
+QVariantMap parseRuleArgs(const QString &f_text)
 {
     QVariantMap l_args;
     QString l_key;
-    for (const QString &l_token : f_tokens) {
+    for (const QString &l_token : f_text.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
         const int l_split = l_token.indexOf(QLatin1Char('='));
         if (l_split > 0) {
             l_key = l_token.left(l_split);
@@ -124,7 +125,7 @@ int removeRulesFrom(const QString &f_event, const QString &f_action,
 
 } // namespace
 
-void cmdRules(CommandContext &f_context)
+void cmdRules(CommandContext &f_context, const Args &)
 {
     ServerContext *l_server = f_context.server();
     akashi::Area *l_area = l_server->areaById(f_context.areaId());
@@ -149,7 +150,7 @@ void cmdRules(CommandContext &f_context)
     f_context.reply(l_entries.join("\n"));
 }
 
-void cmdRuleActions(CommandContext &f_context)
+void cmdRuleActions(CommandContext &f_context, const Args &)
 {
     RuleRegistry *l_registry = f_context.server()->ruleRegistry();
     QStringList l_names = l_registry->actionNames();
@@ -163,29 +164,29 @@ void cmdRuleActions(CommandContext &f_context)
     f_context.reply(l_entries.join("\n"));
 }
 
-void cmdAddRule(CommandContext &f_context)
+void cmdAddRule(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (!l_area) {
         return;
     }
-    const QString l_event = f_context.argument(0);
-    const QString l_action = f_context.argument(1);
-    if (addRuleTo(f_context, l_event, l_action, parseRuleArgs(f_context.arguments().mid(2)),
+    const QString l_event = f_args.text(QStringLiteral("event"));
+    const QString l_action = f_args.text(QStringLiteral("action"));
+    if (addRuleTo(f_context, l_event, l_action, parseRuleArgs(f_args.text(QStringLiteral("args"))),
                   l_area->beforeRules(), l_area->afterRules(), l_area->transformRules())) {
         f_context.reply("Added " + l_action + " to " + l_event + " in this area.");
         logRuleChange(f_context, QStringLiteral("addrule"), "attached " + l_action + " to " + l_event + " in area " + f_context.areaName());
     }
 }
 
-void cmdRemoveRule(CommandContext &f_context)
+void cmdRemoveRule(CommandContext &f_context, const Args &f_args)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
     if (!l_area) {
         return;
     }
-    const QString l_event = f_context.argument(0);
-    const QString l_action = f_context.argument(1);
+    const QString l_event = f_args.text(QStringLiteral("event"));
+    const QString l_action = f_args.text(QStringLiteral("action"));
     const int l_removed = removeRulesFrom(l_event, l_action, l_area->beforeRules(), l_area->afterRules(), l_area->transformRules());
     f_context.reply(l_removed > 0
                         ? "Removed " + QString::number(l_removed) + " rule(s) from this area."
@@ -196,43 +197,47 @@ void cmdRemoveRule(CommandContext &f_context)
     }
 }
 
-void cmdFloorRule(CommandContext &f_context)
+static Floor *invokerFloor(CommandContext &f_context)
 {
-    Floor *l_floor = f_context.server()->floorById(f_context.server()->floorIdForArea(f_context.areaId()));
+    return f_context.server()->floorById(f_context.server()->floorIdForArea(f_context.areaId()));
+}
+
+// /floorrule add <event> <action> [args]
+void cmdFloorRuleAdd(CommandContext &f_context, const Args &f_args)
+{
+    Floor *l_floor = invokerFloor(f_context);
     if (!l_floor) {
         return;
     }
-    const QString l_mode = f_context.argument(0);
-    const QString l_event = f_context.argument(1);
-    if (l_mode == QStringLiteral("add")) {
-        const QString l_action = f_context.argument(2);
-        if (l_action.isEmpty()) {
-            f_context.reply("Usage: /floorrule add <event> <action> [key=value ...]");
-            return;
-        }
-        if (addRuleTo(f_context, l_event, l_action, parseRuleArgs(f_context.arguments().mid(3)),
-                      l_floor->before_rules, l_floor->after_rules, l_floor->transform_rules)) {
-            f_context.reply("Added " + l_action + " to " + l_event + " on floor " + l_floor->name + ".");
-            logRuleChange(f_context, QStringLiteral("floorrule"), "attached " + l_action + " to " + l_event + " on floor " + l_floor->name);
-        }
-    }
-    else if (l_mode == QStringLiteral("remove")) {
-        const QString l_action = f_context.argument(2);
-        const int l_removed = removeRulesFrom(l_event, l_action, l_floor->before_rules, l_floor->after_rules, l_floor->transform_rules);
-        f_context.reply(l_removed > 0
-                            ? "Removed " + QString::number(l_removed) + " rule(s) from floor " + l_floor->name + "."
-                            : "This floor has no matching rules.");
-        if (l_removed > 0) {
-            const QString l_what = l_action.isEmpty() ? l_event : l_event + " " + l_action;
-            logRuleChange(f_context, QStringLiteral("floorrule"), "removed " + QString::number(l_removed) + " " + l_what + " rule(s) from floor " + l_floor->name);
-        }
-    }
-    else {
-        f_context.reply("Usage: /floorrule <add|remove> <event> [action] [key=value ...]");
+    const QString l_event = f_args.text(QStringLiteral("event"));
+    const QString l_action = f_args.text(QStringLiteral("action"));
+    if (addRuleTo(f_context, l_event, l_action, parseRuleArgs(f_args.text(QStringLiteral("args"))),
+                  l_floor->before_rules, l_floor->after_rules, l_floor->transform_rules)) {
+        f_context.reply("Added " + l_action + " to " + l_event + " on floor " + l_floor->name + ".");
+        logRuleChange(f_context, QStringLiteral("floorrule"), "attached " + l_action + " to " + l_event + " on floor " + l_floor->name);
     }
 }
 
-void cmdReloadRules(CommandContext &f_context)
+// /floorrule remove <event> [action]
+void cmdFloorRuleRemove(CommandContext &f_context, const Args &f_args)
+{
+    Floor *l_floor = invokerFloor(f_context);
+    if (!l_floor) {
+        return;
+    }
+    const QString l_event = f_args.text(QStringLiteral("event"));
+    const QString l_action = f_args.text(QStringLiteral("action"));
+    const int l_removed = removeRulesFrom(l_event, l_action, l_floor->before_rules, l_floor->after_rules, l_floor->transform_rules);
+    f_context.reply(l_removed > 0
+                        ? "Removed " + QString::number(l_removed) + " rule(s) from floor " + l_floor->name + "."
+                        : "This floor has no matching rules.");
+    if (l_removed > 0) {
+        const QString l_what = l_action.isEmpty() ? l_event : l_event + " " + l_action;
+        logRuleChange(f_context, QStringLiteral("floorrule"), "removed " + QString::number(l_removed) + " " + l_what + " rule(s) from floor " + l_floor->name);
+    }
+}
+
+void cmdReloadRules(CommandContext &f_context, const Args &)
 {
     f_context.server()->applyConfigRules();
     f_context.server()->applyConfigGrants();
@@ -242,29 +247,30 @@ void cmdReloadRules(CommandContext &f_context)
 
 void registerRuleCommands(CommandRegistry &f_registry)
 {
-    f_registry.registerCommand(
-        {QStringLiteral("rules"), {}, {akashi::permission::info_rules}, 0, QStringLiteral("/rules"), QStringLiteral("Lists the rules active in this area, floor rules included.")},
-        cmdRules, QStringLiteral("core"));
+    using namespace akashi::permission;
+    const QString l_core = QStringLiteral("core");
+    const Param l_event = param::token(QStringLiteral("event"));
+    const Param l_action = param::token(QStringLiteral("action"));
+    // key=value pairs, split by the body; a value may run over spaces.
+    const Param l_rule_args = param::text(QStringLiteral("args")).optional();
 
-    f_registry.registerCommand(
-        {QStringLiteral("ruleactions"), {}, {akashi::permission::info_ruleactions}, 0, QStringLiteral("/ruleactions"), QStringLiteral("Lists the rule actions available to /addrule.")},
-        cmdRuleActions, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("rules"), {info_rules}, {}, QStringLiteral("Lists the rules active in this area, floor rules included."), cmdRules), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("ruleactions"), {info_ruleactions}, {}, QStringLiteral("Lists the rule actions available to /addrule."), cmdRuleActions), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("addrule"), {modify_rules}, {l_event, l_action, l_rule_args}, QStringLiteral("Attaches a rule action to an event in this area."), cmdAddRule), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("removerule"), {modify_rules}, {l_event, param::token(QStringLiteral("action")).optional()}, QStringLiteral("Removes this area's rules for an event."), cmdRemoveRule), l_core);
 
-    f_registry.registerCommand(
-        {QStringLiteral("addrule"), {}, {akashi::permission::modify_rules}, 2, QStringLiteral("/addrule <event> <action> [key=value ...]"), QStringLiteral("Attaches a rule action to an event in this area.")},
-        cmdAddRule, QStringLiteral("core"));
+    {
+        CommandSpec l_floorrule;
+        l_floorrule.name = QStringLiteral("floorrule");
+        l_floorrule.description = QStringLiteral("Adds or removes a rule on this floor.");
+        l_floorrule.variants = {
+            {.id = QStringLiteral("add"), .gate = {modify_floors}, .description = QStringLiteral("Attaches a rule action to an event on this floor."), .params = {param::word(QStringLiteral("mode"), {QStringLiteral("add")}), l_event, l_action, l_rule_args}, .run = cmdFloorRuleAdd},
+            {.id = QStringLiteral("remove"), .gate = {modify_floors}, .description = QStringLiteral("Removes this floor's rules for an event."), .params = {param::word(QStringLiteral("mode"), {QStringLiteral("remove")}), l_event, param::token(QStringLiteral("action")).optional()}, .run = cmdFloorRuleRemove},
+        };
+        f_registry.registerCommand(l_floorrule, l_core);
+    }
 
-    f_registry.registerCommand(
-        {QStringLiteral("removerule"), {}, {akashi::permission::modify_rules}, 1, QStringLiteral("/removerule <event> [action]"), QStringLiteral("Removes this area's rules for an event.")},
-        cmdRemoveRule, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("floorrule"), {}, {akashi::permission::modify_floors}, 2, QStringLiteral("/floorrule <add|remove> <event> [action] [key=value ...]"), QStringLiteral("Adds or removes a rule on this floor.")},
-        cmdFloorRule, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("reloadrules"), {}, {akashi::permission::modify_floors}, 0, QStringLiteral("/reloadrules"), QStringLiteral("Reapplies the rule declarations from areas.json.")},
-        cmdReloadRules, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("reloadrules"), {modify_floors}, {}, QStringLiteral("Reapplies the rule declarations from areas.json."), cmdReloadRules), l_core);
 }
 
 } // namespace akashi::commands

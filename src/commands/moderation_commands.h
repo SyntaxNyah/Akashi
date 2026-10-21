@@ -50,16 +50,13 @@ void registerModerationCommands(akashi::CommandRegistry &f_registry);
 
 // Places a sanction through the server's one door: stored under the
 // target's IPID and HWID so it survives reconnects and restarts, flagged
-// on every window the person owns, with an optional trailing time after
-// which it lifts itself - without one it holds until lifted by hand.
-// Returns false when a time was given but could not be read; an error
-// was already replied. f_data is the sanction's payload, if it has one.
-bool applySanction(akashi::CommandContext &f_context, akashi::TargetPlayer &f_target, const QString &f_sanction_id, const QString &f_data = QString());
-
-// The same with the lifting time already read - for declared commands,
-// whose "until" parameter arrives checked. Without one it holds until
-// lifted by hand.
+// on every window the person owns, lifting itself at f_until if one is
+// given - without one it holds until lifted by hand. f_data is the
+// sanction's payload, if it has one.
 bool applySanctionUntil(akashi::CommandContext &f_context, akashi::TargetPlayer &f_target, const QString &f_sanction_id, const std::optional<QDateTime> &f_until, const QString &f_data = QString());
+
+// The optional "until" parameter of a sanction command, already read.
+std::optional<QDateTime> untilOf(const akashi::Args &f_args);
 
 // Lifts a sanction by hand: the stored row, the pending lift and the
 // session flags of everyone it covered all clear.

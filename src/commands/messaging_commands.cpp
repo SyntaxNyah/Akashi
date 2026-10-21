@@ -14,6 +14,8 @@
 #include "proto/text_utils.h"
 #include "world/area.h"
 
+#include <QDateTime>
+
 #include <optional>
 #include <utility>
 
@@ -44,21 +46,19 @@ static void announceGlobalMessage(CommandContext &f_context, const QString &f_ch
                                      l_event.player_state_id, l_event.client_session_id);
 }
 
-void cmdPos(CommandContext &f_context)
+void cmdPos(CommandContext &f_context, const Args &f_args)
 {
     akashi::ClientSession *l_self = f_context.self();
-    l_self->changePosition(f_context.argument(0));
+    l_self->changePosition(f_args.text(QStringLiteral("position")));
 }
 
-void cmdForcePos(CommandContext &f_context)
+// /forcepos <position> <target>, or * for everyone in the area.
+void cmdForcePos(CommandContext &f_context, const Args &f_args)
 {
     QList<akashi::ClientSession *> l_targets;
     int l_forced_clients = 0;
-    if (f_context.argument(1) != "*") {
-        akashi::ClientSession *l_target_client = f_context.findClient(1);
-        if (!l_target_client) {
-            return;
-        }
+    const QString l_position = f_args.text(QStringLiteral("position"));
+    if (akashi::ClientSession *l_target_client = f_args.client(QStringLiteral("target"))) {
         l_targets.append(l_target_client);
     }
     else {
@@ -70,36 +70,36 @@ void cmdForcePos(CommandContext &f_context)
     }
     for (akashi::ClientSession *l_target : l_targets) {
         l_target->sendServerMessage("Position forcibly changed by CM.");
-        l_target->changePosition(f_context.argument(0));
+        l_target->changePosition(l_position);
         l_forced_clients++;
     }
     // The summary echoes what was actually stored, not the raw argument.
-    f_context.reply("Forced " + QString::number(l_forced_clients) + " into pos " + akashi::sanitizePosition(f_context.argument(0)) + ".");
+    f_context.reply("Forced " + QString::number(l_forced_clients) + " into pos " + akashi::sanitizePosition(l_position) + ".");
 }
 
-void cmdG(CommandContext &f_context)
+void cmdG(CommandContext &f_context, const Args &f_args)
 {
     QString l_sender_name = f_context.name();
     QString l_sender_area = f_context.areaName();
-    QString l_sender_message = f_context.arguments().join(" ");
+    QString l_sender_message = f_args.text(QStringLiteral("message"));
     akashi::Packet l_mod_packet("CT", {"[G][" + f_context.ipid() + "][" + l_sender_area + "]" + l_sender_name, l_sender_message});
     akashi::Packet l_user_packet("CT", {"[G][" + l_sender_area + "]" + l_sender_name, l_sender_message});
     f_context.server()->broadcast(l_user_packet, l_mod_packet, ServerContext::TARGET_TYPE::AUTHENTICATED);
     announceGlobalMessage(f_context, QStringLiteral("global"), l_sender_message);
 }
 
-void cmdNeed(CommandContext &f_context)
+void cmdNeed(CommandContext &f_context, const Args &f_args)
 {
     QString l_sender_area = f_context.areaName();
-    QString l_sender_message = f_context.arguments().join(" ");
+    QString l_sender_message = f_args.text(QStringLiteral("message"));
     f_context.server()->broadcast(akashi::Packet("CT", {f_context.server()->serverNickname(), "=== Advert ===\n[" + l_sender_area + "] needs " + l_sender_message + "."}), ServerContext::TARGET_TYPE::ADVERT);
     announceGlobalMessage(f_context, QStringLiteral("advert"), l_sender_message);
 }
 
-void cmdSwitch(CommandContext &f_context)
+void cmdSwitch(CommandContext &f_context, const Args &f_args)
 {
     akashi::ClientSession *l_self = f_context.self();
-    int l_selected_char_id = f_context.server()->characterId(f_context.arguments().join(" "));
+    int l_selected_char_id = f_context.server()->characterId(f_args.text(QStringLiteral("character")));
     if (l_selected_char_id == -1) {
         f_context.reply("That does not look like a valid character.");
         return;
@@ -111,7 +111,7 @@ void cmdSwitch(CommandContext &f_context)
     }
 }
 
-void cmdRandomChar(CommandContext &f_context)
+void cmdRandomChar(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_self = f_context.self();
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
@@ -138,7 +138,7 @@ void cmdRandomChar(CommandContext &f_context)
     }
 }
 
-void cmdToggleGlobal(CommandContext &f_context)
+void cmdToggleGlobal(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_self = f_context.self();
     l_self->setGlobalEnabled(!l_self->isGlobalEnabled());
@@ -161,150 +161,142 @@ void cmdPM(CommandContext &f_context, const Args &f_args)
     announceGlobalMessage(f_context, QStringLiteral("pm"), l_message);
 }
 
-void cmdAnnounce(CommandContext &f_context)
+void cmdAnnounce(CommandContext &f_context, const Args &f_args)
 {
-    f_context.replyToServer("=== Announcement ===\r\n" + f_context.arguments().join(" ") + "\r\n=============");
+    f_context.replyToServer("=== Announcement ===\r\n" + f_args.text(QStringLiteral("message")) + "\r\n=============");
 }
 
-void cmdM(CommandContext &f_context)
+void cmdM(CommandContext &f_context, const Args &f_args)
 {
     QString l_sender_name = f_context.name();
-    QString l_sender_message = f_context.arguments().join(" ");
+    QString l_sender_message = f_args.text(QStringLiteral("message"));
     f_context.server()->broadcast(akashi::Packet("CT", {"[M]" + l_sender_name, l_sender_message}), ServerContext::TARGET_TYPE::MODCHAT);
 }
 
-void cmdGM(CommandContext &f_context)
+void cmdGM(CommandContext &f_context, const Args &f_args)
 {
     QString l_sender_name = f_context.name();
     QString l_sender_area = f_context.areaName();
-    QString l_sender_message = f_context.arguments().join(" ");
+    QString l_sender_message = f_args.text(QStringLiteral("message"));
     f_context.server()->broadcast(akashi::Packet("CT", {"[G][" + l_sender_area + "]" + "[" + l_sender_name + "][M]", l_sender_message}), ServerContext::TARGET_TYPE::MODCHAT);
 }
 
-void cmdLM(CommandContext &f_context)
+void cmdLM(CommandContext &f_context, const Args &f_args)
 {
     QString l_sender_name = f_context.name();
-    QString l_sender_message = f_context.arguments().join(" ");
+    QString l_sender_message = f_args.text(QStringLiteral("message"));
     f_context.server()->broadcast(akashi::Packet("CT", {"[" + l_sender_name + "][M]", l_sender_message}), f_context.areaId());
 }
 
-void cmdGimp(CommandContext &f_context)
+void cmdGimp(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::gimped);
-        if (!applySanction(f_context, *l_target, sanction::gimped))
-            return;
-        if (l_was_sanctioned)
-            f_context.reply("That player is already gimped!");
-        else {
-            f_context.reply("Gimped player.");
-            l_target->reply("You have been gimped! " + reprimand(f_context.server()));
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::gimped);
+    if (!applySanctionUntil(f_context, l_target, sanction::gimped, untilOf(f_args)))
+        return;
+    if (l_was_sanctioned)
+        f_context.reply("That player is already gimped!");
+    else {
+        f_context.reply("Gimped player.");
+        l_target.reply("You have been gimped! " + reprimand(f_context.server()));
     }
 }
 
-void cmdUngimp(CommandContext &f_context)
+void cmdUngimp(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::gimped);
-        liftSanction(f_context, *l_target, sanction::gimped);
-        if (!l_was_sanctioned)
-            f_context.reply("That player is not gimped!");
-        else {
-            f_context.reply("Ungimped player.");
-            l_target->reply("A moderator has ungimped you! " + reprimand(f_context.server(), true));
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::gimped);
+    liftSanction(f_context, l_target, sanction::gimped);
+    if (!l_was_sanctioned)
+        f_context.reply("That player is not gimped!");
+    else {
+        f_context.reply("Ungimped player.");
+        l_target.reply("A moderator has ungimped you! " + reprimand(f_context.server(), true));
     }
 }
 
-void cmdDisemvowel(CommandContext &f_context)
+void cmdDisemvowel(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::disemvoweled);
-        if (!applySanction(f_context, *l_target, sanction::disemvoweled))
-            return;
-        if (l_was_sanctioned)
-            f_context.reply("That player is already disemvoweled!");
-        else {
-            f_context.reply("Disemvoweled player.");
-            l_target->reply("You have been disemvoweled! " + reprimand(f_context.server()));
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::disemvoweled);
+    if (!applySanctionUntil(f_context, l_target, sanction::disemvoweled, untilOf(f_args)))
+        return;
+    if (l_was_sanctioned)
+        f_context.reply("That player is already disemvoweled!");
+    else {
+        f_context.reply("Disemvoweled player.");
+        l_target.reply("You have been disemvoweled! " + reprimand(f_context.server()));
     }
 }
 
-void cmdUnDisemvowel(CommandContext &f_context)
+void cmdUnDisemvowel(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::disemvoweled);
-        liftSanction(f_context, *l_target, sanction::disemvoweled);
-        if (!l_was_sanctioned)
-            f_context.reply("That player is not disemvoweled!");
-        else {
-            f_context.reply("Undisemvoweled player.");
-            l_target->reply("A moderator has undisemvoweled you! " + reprimand(f_context.server(), true));
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::disemvoweled);
+    liftSanction(f_context, l_target, sanction::disemvoweled);
+    if (!l_was_sanctioned)
+        f_context.reply("That player is not disemvoweled!");
+    else {
+        f_context.reply("Undisemvoweled player.");
+        l_target.reply("A moderator has undisemvoweled you! " + reprimand(f_context.server(), true));
     }
 }
 
-void cmdShake(CommandContext &f_context)
+void cmdShake(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::shaken);
-        if (!applySanction(f_context, *l_target, sanction::shaken))
-            return;
-        if (l_was_sanctioned)
-            f_context.reply("That player is already shaken!");
-        else {
-            f_context.reply("Shook player.");
-            l_target->reply("A moderator has shaken your words! " + reprimand(f_context.server()));
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::shaken);
+    if (!applySanctionUntil(f_context, l_target, sanction::shaken, untilOf(f_args)))
+        return;
+    if (l_was_sanctioned)
+        f_context.reply("That player is already shaken!");
+    else {
+        f_context.reply("Shook player.");
+        l_target.reply("A moderator has shaken your words! " + reprimand(f_context.server()));
     }
 }
 
-void cmdUnShake(CommandContext &f_context)
+void cmdUnShake(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::shaken);
-        liftSanction(f_context, *l_target, sanction::shaken);
-        if (!l_was_sanctioned)
-            f_context.reply("That player is not shaken!");
-        else {
-            f_context.reply("Unshook player.");
-            l_target->reply("A moderator has unshook you! " + reprimand(f_context.server(), true));
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::shaken);
+    liftSanction(f_context, l_target, sanction::shaken);
+    if (!l_was_sanctioned)
+        f_context.reply("That player is not shaken!");
+    else {
+        f_context.reply("Unshook player.");
+        l_target.reply("A moderator has unshook you! " + reprimand(f_context.server(), true));
     }
 }
 
-void cmdMedieval(CommandContext &f_context)
+void cmdMedieval(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::medieval);
-        if (!applySanction(f_context, *l_target, sanction::medieval))
-            return;
-        if (l_was_sanctioned)
-            f_context.reply("That player is already speaking Ye Olde English!");
-        else {
-            f_context.reply("It is done, sire.");
-            l_target->reply("Forsooth! Thine speech will henceforth be Ye Olde!");
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::medieval);
+    if (!applySanctionUntil(f_context, l_target, sanction::medieval, untilOf(f_args)))
+        return;
+    if (l_was_sanctioned)
+        f_context.reply("That player is already speaking Ye Olde English!");
+    else {
+        f_context.reply("It is done, sire.");
+        l_target.reply("Forsooth! Thine speech will henceforth be Ye Olde!");
     }
 }
 
-void cmdUnmedieval(CommandContext &f_context)
+void cmdUnmedieval(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        const bool l_was_sanctioned = l_target->hasSanction(sanction::medieval);
-        liftSanction(f_context, *l_target, sanction::medieval);
-        if (!l_was_sanctioned)
-            f_context.reply("That player is not speaking Ye Olde English!");
-        else {
-            f_context.reply("Un-medieval'd player.");
-            l_target->reply("Hark! Thine speech hast been returneth to normal.");
-        }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    const bool l_was_sanctioned = l_target.hasSanction(sanction::medieval);
+    liftSanction(f_context, l_target, sanction::medieval);
+    if (!l_was_sanctioned)
+        f_context.reply("That player is not speaking Ye Olde English!");
+    else {
+        f_context.reply("Un-medieval'd player.");
+        l_target.reply("Hark! Thine speech hast been returneth to normal.");
     }
 }
 
-void cmdMedievalMode(CommandContext &f_context)
+void cmdMedievalMode(CommandContext &f_context, const Args &)
 {
     akashi::Area *l_area = f_context.area();
     l_area->toggleMedievalMode();
@@ -312,7 +304,7 @@ void cmdMedievalMode(CommandContext &f_context)
     f_context.replyToArea("Hear ye, hear ye! Medieval Mode is now " + l_state);
 }
 
-void cmdMutePM(CommandContext &f_context)
+void cmdMutePM(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_self = f_context.self();
     l_self->setPmMuted(!l_self->isPmMuted());
@@ -320,7 +312,7 @@ void cmdMutePM(CommandContext &f_context)
     f_context.reply("PM's are now " + l_str_en);
 }
 
-void cmdToggleAdverts(CommandContext &f_context)
+void cmdToggleAdverts(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_self = f_context.self();
     l_self->setAdvertEnabled(!l_self->isAdvertEnabled());
@@ -328,7 +320,7 @@ void cmdToggleAdverts(CommandContext &f_context)
     f_context.reply("Advertisements turned " + l_str_en);
 }
 
-void cmdAfk(CommandContext &f_context)
+void cmdAfk(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_self = f_context.self();
     l_self->setAfk(true);
@@ -336,33 +328,22 @@ void cmdAfk(CommandContext &f_context)
     l_self->setCharacterName(l_self->characterName() + " [AFK]");
 }
 
-void cmdCharCurse(CommandContext &f_context)
+// /charcurse <target> [characters...]: the target is already checked,
+// staff protection included; the characters are a comma-separated list.
+void cmdCharCurse(CommandContext &f_context, const Args &f_args)
 {
-    akashi::ClientSession *l_target = f_context.findClient(0);
-    if (!l_target) {
-        return;
-    }
-
+    akashi::ClientSession *l_target = f_args.client(QStringLiteral("target"));
     if (l_target->isCharCursed()) {
         f_context.reply("That player is already charcursed!");
         return;
     }
 
-    // The same administration-time staff protection every sanction
-    // command applies.
-    if (l_target->canPerform(akashi::permission::sanction_immune) && !f_context.canPerform(akashi::permission::super)) {
-        f_context.reply("That player is protected from sanctions.");
-        return;
-    }
-
     QStringList l_char_names;
-    if (f_context.argc() == 1) {
+    if (!f_args.has(QStringLiteral("characters"))) {
         l_char_names << l_target->character();
     }
     else {
-        QStringList l_argv = f_context.arguments();
-        l_argv.removeFirst();
-        l_char_names = l_argv.join(" ").split(",");
+        l_char_names = f_args.text(QStringLiteral("characters")).split(",");
         for (const QString &l_char_name : std::as_const(l_char_names)) {
             if (f_context.server()->characterId(l_char_name) == -1) {
                 f_context.reply("Could not find character: " + l_char_name);
@@ -394,13 +375,9 @@ void cmdCharCurse(CommandContext &f_context)
     f_context.reply("Charcursed player.");
 }
 
-void cmdUnCharCurse(CommandContext &f_context)
+void cmdUnCharCurse(CommandContext &f_context, const Args &f_args)
 {
-    akashi::ClientSession *l_target = f_context.findClient(0);
-    if (!l_target) {
-        return;
-    }
-
+    akashi::ClientSession *l_target = f_args.client(QStringLiteral("target"));
     if (!l_target->isCharCursed()) {
         f_context.reply("That player is not charcursed!");
         return;
@@ -413,49 +390,40 @@ void cmdUnCharCurse(CommandContext &f_context)
     l_target->sendServerMessage("You were uncharcursed.");
 }
 
-void cmdCharSelect(CommandContext &f_context)
+void cmdCharSelect(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_self = f_context.self();
     l_self->takeCharacter(-1, true);
 }
 
-void cmdForceCharSelect(CommandContext &f_context)
+void cmdForceCharSelect(CommandContext &f_context, const Args &f_args)
 {
-    if (auto l_target = f_context.resolveTarget()) {
-        l_target->forceCharacterSelect();
-        f_context.reply("Client has been forced into character select!");
-    }
+    TargetPlayer l_target = f_args.target(QStringLiteral("target"));
+    l_target.forceCharacterSelect();
+    f_context.reply("Client has been forced into character select!");
 }
 
-void cmdA(CommandContext &f_context)
+// /a <area> <message>: the area is already checked to exist.
+void cmdA(CommandContext &f_context, const Args &f_args)
 {
-    // The range matters: areaById() answers nullptr outside it, which the
-    // owners() call below would dereference.
-    const auto l_area_id = helpers::parseInt(f_context.argument(0), QStringLiteral("area_id"), 0, f_context.server()->areaCount() - 1);
-    if (!l_area_id) {
-        f_context.reply(l_area_id.error());
-        return;
-    }
-
-    akashi::Area *l_area = f_context.server()->areaById(*l_area_id);
+    const int l_area_id = f_args.number(QStringLiteral("area"));
+    akashi::Area *l_area = f_context.server()->areaById(l_area_id);
     if (!l_area->owners().contains(f_context.clientId())) {
         f_context.reply("You are not CM in that area.");
         return;
     }
 
-    QStringList l_argv = f_context.arguments();
-    l_argv.removeAt(0);
     QString l_sender_name = f_context.name();
-    QString l_ooc_message = l_argv.join(" ");
-    f_context.server()->broadcast(akashi::Packet("CT", {"[CM]" + l_sender_name, l_ooc_message}), *l_area_id);
+    QString l_ooc_message = f_args.text(QStringLiteral("message"));
+    f_context.server()->broadcast(akashi::Packet("CT", {"[CM]" + l_sender_name, l_ooc_message}), l_area_id);
     announceGlobalMessage(f_context, QStringLiteral("cm"), l_ooc_message);
 }
 
-void cmdS(CommandContext &f_context)
+void cmdS(CommandContext &f_context, const Args &f_args)
 {
     int l_all_areas = f_context.server()->areaCount() - 1;
     QString l_sender_name = f_context.name();
-    QString l_ooc_message = f_context.arguments().join(" ");
+    QString l_ooc_message = f_args.text(QStringLiteral("message"));
 
     for (int i = 0; i <= l_all_areas; i++) {
         if (f_context.server()->areaById(i)->owners().contains(f_context.clientId()))
@@ -464,7 +432,7 @@ void cmdS(CommandContext &f_context)
     announceGlobalMessage(f_context, QStringLiteral("cm"), l_ooc_message);
 }
 
-void cmdFirstPerson(CommandContext &f_context)
+void cmdFirstPerson(CommandContext &f_context, const Args &)
 {
     akashi::ClientSession *l_self = f_context.self();
     l_self->setFirstPerson(!l_self->isFirstPerson());
@@ -474,45 +442,56 @@ void cmdFirstPerson(CommandContext &f_context)
 
 void registerMessagingCommands(CommandRegistry &f_registry)
 {
-    f_registry.registerCommand({"pos", {}, {permission::characters_pos}, 1, "/pos <position>", "Moves you to a position in the area (def, pro, wit, jud, ...)."}, cmdPos, "core");
-    f_registry.registerCommand({"forcepos", {}, {permission::cm_forcepos}, 2, "/forcepos <position> <id>", "Forces a client to a position."}, cmdForcePos, "core");
-    f_registry.registerCommand({"g", {}, {permission::messaging_g}, 1, "/g <message>", "Sends a message to the global chat."}, cmdG, "core");
-    f_registry.registerCommand({"need", {}, {permission::messaging_need}, 1, "/need <message>", "Sends a player advert to everyone with adverts enabled."}, cmdNeed, "core");
-    f_registry.registerCommand({"switch", {}, {permission::characters_switch}, 1, "/switch <character>", "Switches you to the named character."}, cmdSwitch, "core");
-    f_registry.registerCommand({"randomchar", {}, {permission::characters_randomchar}, 0, "/randomchar", "Picks a random character for you."}, cmdRandomChar, "core");
-    f_registry.registerCommand({"toggleglobal", {}, {permission::messaging_toggleglobal}, 0, "/toggleglobal", "Toggles whether you receive global chat."}, cmdToggleGlobal, "core");
+    using namespace akashi::permission;
+    const QString l_core = QStringLiteral("core");
+    const Param l_message = param::text(QStringLiteral("message"));
+    const Param l_target = param::client(QStringLiteral("target"));
+    // Sanctions refuse staff who hold sanction.immune, unless the
+    // moderator holds super.
+    const Param l_sanctionable = param::client(QStringLiteral("target")).immuneIf(sanction_immune);
+    const Param l_until = param::when(QStringLiteral("until")).optional();
+
+    f_registry.registerCommand(singleForm(QStringLiteral("pos"), {characters_pos}, {param::token(QStringLiteral("position"))}, QStringLiteral("Moves you to a position in the area (def, pro, wit, jud, ...)."), cmdPos), l_core);
     {
-        CommandSpec l_pm;
-        l_pm.name = QStringLiteral("pm");
-        l_pm.description = QStringLiteral("Sends a private message to a client.");
-        l_pm.variants = {
-            {.id = QStringLiteral("send"), .gate = {permission::messaging_pm}, .params = {param::client(QStringLiteral("target")), param::text(QStringLiteral("message"))}, .run = cmdPM},
+        CommandSpec l_forcepos;
+        l_forcepos.name = QStringLiteral("forcepos");
+        l_forcepos.description = QStringLiteral("Forces a client to a position.");
+        const Param l_position = param::token(QStringLiteral("position"));
+        l_forcepos.variants = {
+            {.id = QStringLiteral("one"), .gate = {cm_forcepos}, .description = QStringLiteral("Forces one client."), .params = {l_position, l_target}, .run = cmdForcePos},
+            {.id = QStringLiteral("all"), .gate = {cm_forcepos}, .description = QStringLiteral("Forces everyone in the area."), .params = {l_position, param::word(QStringLiteral("target"), {QStringLiteral("*")})}, .run = cmdForcePos},
         };
-        f_registry.registerCommand(l_pm, QStringLiteral("core"));
+        f_registry.registerCommand(l_forcepos, l_core);
     }
-    f_registry.registerCommand({"announce", {}, {permission::announcer}, 1, "/announce <message>", "Sends an announcement to the whole server."}, cmdAnnounce, "core");
-    f_registry.registerCommand({"m", {}, {permission::chat_moderator}, 1, "/m <message>", "Sends a message to the moderator chat."}, cmdM, "core");
-    f_registry.registerCommand({"gm", {}, {permission::chat_moderator}, 1, "/gm <message>", "Sends a global message tagged as a moderator."}, cmdGM, "core");
-    f_registry.registerCommand({"lm", {}, {permission::chat_moderator}, 1, "/lm <message>", "Sends an area message tagged as a moderator."}, cmdLM, "core");
-    f_registry.registerCommand({"gimp", {}, {permission::sanction_gimp}, 1, "/gimp <id> [until]", "Replaces a client's IC messages with canned lines, until a time like 1d12h if one is given."}, cmdGimp, "core");
-    f_registry.registerCommand({"ungimp", {}, {permission::sanction_gimp}, 1, "/ungimp <id>", "Lifts a client's gimp."}, cmdUngimp, "core");
-    f_registry.registerCommand({"disemvowel", {}, {permission::sanction_disemvowel}, 1, "/disemvowel <id> [until]", "Strips the vowels from a client's IC messages, until a time like 1d12h if one is given."}, cmdDisemvowel, "core");
-    f_registry.registerCommand({"undisemvowel", {}, {permission::sanction_disemvowel}, 1, "/undisemvowel <id>", "Gives a client their vowels back."}, cmdUnDisemvowel, "core");
-    f_registry.registerCommand({"shake", {}, {permission::sanction_shake}, 1, "/shake <id> [until]", "Shuffles the words of a client's IC messages, until a time like 1d12h if one is given."}, cmdShake, "core");
-    f_registry.registerCommand({"unshake", {}, {permission::sanction_shake}, 1, "/unshake <id>", "Stops shuffling a client's IC messages."}, cmdUnShake, "core");
-    f_registry.registerCommand({"medieval", {}, {permission::sanction_medieval}, 1, "/medieval <id> [until]", "Makes a client speak in medieval English, until a time like 1d12h if one is given."}, cmdMedieval, "core");
-    f_registry.registerCommand({"unmedieval", {}, {permission::sanction_medieval}, 1, "/unmedieval <id>", "Returns a client to plain speech."}, cmdUnmedieval, "core");
-    f_registry.registerCommand({"medievalmode", {"medieval_mode"}, {permission::sanction_medieval}, 0, "/medievalmode", "Toggles medieval mode in the area."}, cmdMedievalMode, "core");
-    f_registry.registerCommand({"mutepm", {}, {permission::messaging_mutepm}, 0, "/mutepm", "Toggles whether you receive private messages."}, cmdMutePM, "core");
-    f_registry.registerCommand({"toggleadverts", {}, {permission::messaging_toggleadverts}, 0, "/toggleadverts", "Toggles whether you receive player adverts."}, cmdToggleAdverts, "core");
-    f_registry.registerCommand({"afk", {}, {permission::messaging_afk}, 0, "/afk", "Marks you as away."}, cmdAfk, "core");
-    f_registry.registerCommand({"charcurse", {}, {permission::sanction_charcurse}, 1, "/charcurse <id> [characters...]", "Restricts a client to the listed characters."}, cmdCharCurse, "core");
-    f_registry.registerCommand({"uncharcurse", {}, {permission::sanction_charcurse}, 1, "/uncharcurse <id>", "Lifts a client's character restriction."}, cmdUnCharCurse, "core");
-    f_registry.registerCommand({"charselect", {}, {permission::characters_charselect}, 0, "/charselect [id]", "Returns you (or a target, with permission) to character select."}, cmdCharSelect, "core");
-    f_registry.registerCommand({"force_charselect", {"forcecharselect"}, {permission::force_charselect}, 1, "/force_charselect <id>", "Forces a client back to character select."}, cmdForceCharSelect, "core");
-    f_registry.registerCommand({"a", {}, {permission::messaging_a}, 2, "/a <area> <message>", "Sends a message to an area you own."}, cmdA, "core");
-    f_registry.registerCommand({"s", {}, {permission::messaging_s}, 0, "/s <message>", "Sends a message to every area you own."}, cmdS, "core");
-    f_registry.registerCommand({"firstperson", {}, {permission::messaging_firstperson}, 0, "/firstperson", "Toggles first-person mode; your emotes stay hidden from others."}, cmdFirstPerson, "core");
+    f_registry.registerCommand(singleForm(QStringLiteral("g"), {messaging_g}, {l_message}, QStringLiteral("Sends a message to the global chat."), cmdG), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("need"), {messaging_need}, {l_message}, QStringLiteral("Sends a player advert to everyone with adverts enabled."), cmdNeed), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("switch"), {characters_switch}, {param::text(QStringLiteral("character"))}, QStringLiteral("Switches you to the named character."), cmdSwitch), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("randomchar"), {characters_randomchar}, {}, QStringLiteral("Picks a random character for you."), cmdRandomChar), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("toggleglobal"), {messaging_toggleglobal}, {}, QStringLiteral("Toggles whether you receive global chat."), cmdToggleGlobal), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("pm"), {messaging_pm}, {l_target, l_message}, QStringLiteral("Sends a private message to a client."), cmdPM), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("announce"), {announcer}, {l_message}, QStringLiteral("Sends an announcement to the whole server."), cmdAnnounce), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("m"), {chat_moderator}, {l_message}, QStringLiteral("Sends a message to the moderator chat."), cmdM), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("gm"), {chat_moderator}, {l_message}, QStringLiteral("Sends a global message tagged as a moderator."), cmdGM), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("lm"), {chat_moderator}, {l_message}, QStringLiteral("Sends an area message tagged as a moderator."), cmdLM), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("gimp"), {sanction_gimp}, {l_sanctionable, l_until}, QStringLiteral("Replaces a client's IC messages with canned lines, until a time like 1d12h if one is given."), cmdGimp), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("ungimp"), {sanction_gimp}, {l_target}, QStringLiteral("Lifts a client's gimp."), cmdUngimp), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("disemvowel"), {sanction_disemvowel}, {l_sanctionable, l_until}, QStringLiteral("Strips the vowels from a client's IC messages, until a time like 1d12h if one is given."), cmdDisemvowel), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("undisemvowel"), {sanction_disemvowel}, {l_target}, QStringLiteral("Gives a client their vowels back."), cmdUnDisemvowel), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("shake"), {sanction_shake}, {l_sanctionable, l_until}, QStringLiteral("Shuffles the words of a client's IC messages, until a time like 1d12h if one is given."), cmdShake), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("unshake"), {sanction_shake}, {l_target}, QStringLiteral("Stops shuffling a client's IC messages."), cmdUnShake), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("medieval"), {sanction_medieval}, {l_sanctionable, l_until}, QStringLiteral("Makes a client speak in medieval English, until a time like 1d12h if one is given."), cmdMedieval), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("unmedieval"), {sanction_medieval}, {l_target}, QStringLiteral("Returns a client to plain speech."), cmdUnmedieval), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("medievalmode"), {sanction_medieval}, {}, QStringLiteral("Toggles medieval mode in the area."), cmdMedievalMode, {QStringLiteral("medieval_mode")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("mutepm"), {messaging_mutepm}, {}, QStringLiteral("Toggles whether you receive private messages."), cmdMutePM), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("toggleadverts"), {messaging_toggleadverts}, {}, QStringLiteral("Toggles whether you receive player adverts."), cmdToggleAdverts), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("afk"), {messaging_afk}, {}, QStringLiteral("Marks you as away."), cmdAfk), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("charcurse"), {sanction_charcurse}, {l_sanctionable, param::text(QStringLiteral("characters")).optional()}, QStringLiteral("Restricts a client to the listed characters, separated by commas."), cmdCharCurse), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("uncharcurse"), {sanction_charcurse}, {l_target}, QStringLiteral("Lifts a client's character restriction."), cmdUnCharCurse), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("charselect"), {characters_charselect}, {}, QStringLiteral("Returns you to character select."), cmdCharSelect), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("force_charselect"), {force_charselect}, {l_target}, QStringLiteral("Forces a client back to character select."), cmdForceCharSelect, {QStringLiteral("forcecharselect")}), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("a"), {messaging_a}, {param::area(QStringLiteral("area")), l_message}, QStringLiteral("Sends a message to an area you own."), cmdA), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("s"), {messaging_s}, {l_message}, QStringLiteral("Sends a message to every area you own."), cmdS), l_core);
+    f_registry.registerCommand(singleForm(QStringLiteral("firstperson"), {messaging_firstperson}, {}, QStringLiteral("Toggles first-person mode; your emotes stay hidden from others."), cmdFirstPerson), l_core);
 }
 
 } // namespace akashi::commands

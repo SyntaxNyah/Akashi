@@ -924,7 +924,7 @@ ExitCode ServerContext::loadContent()
     akashi::commands::registerModerationCommands(*m_command_registry);
     akashi::commands::registerCasingCommands(*m_command_registry);
     akashi::commands::registerMusicCommands(*m_command_registry);
-    akashi::commands::registerRoleplayCommands(*m_command_registry);
+    akashi::commands::registerRoleplayCommands(*m_command_registry, *m_server_settings);
     akashi::commands::registerMessagingCommands(*m_command_registry);
     akashi::commands::registerPluginCommands(*m_command_registry);
     akashi::commands::registerRuleCommands(*m_command_registry);

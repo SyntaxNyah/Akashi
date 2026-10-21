@@ -183,6 +183,7 @@ class ProtocolTest : public QObject
     void advancedBootCreatesARootAccount();
     void setpermsCannotGrantSuperInAnyCase();
     void declaredCommandsRunEndToEnd();
+    void messagingCommandsReadDeclaredForms();
     void emptyModpassBootGeneratesOne();
     void oocRoundtrip();
     void areaMessageRejectsOutOfRangeAreaId();
@@ -1126,11 +1127,12 @@ void ProtocolTest::whyExplainsResolutionAndDumpGrantsLists()
     QVERIFY(output.contains(QStringLiteral("area.cm+kick")));
     QVERIFY(output.contains(QStringLiteral("Cannot target the CMs of this area.")));
 
-    // The walk-in claim is a declared escalation, so /why cm agrees with
-    // what /cm actually answers: the claim needs area.cm, this area does
-    // not offer it, and the place that does is named.
+    // The walk-in claim is its own form, gated on area.cm, so /why cm
+    // agrees with what /cm actually answers: the claim needs area.cm,
+    // this area does not offer it, and the place that does is named.
     command(QStringLiteral("/why cm"));
-    QVERIFY(output.contains(QStringLiteral("Also needs area.cm when claiming an empty area.")));
+    QVERIFY(output.contains(QStringLiteral("/cm needs: area.cm")));
+    QVERIFY(output.contains(QStringLiteral("/cm <target> needs: user")));
     QVERIFY(output.contains(QStringLiteral("[x] area.cm")));
     QVERIFY(output.contains(QStringLiteral("It works in: Courtroom 1")));
 
@@ -1739,6 +1741,35 @@ void ProtocolTest::declaredCommandsRunEndToEnd()
     while (player.pendingCount() > 0)
         received << player.takeNext();
     QVERIFY2(!received.filter(QStringLiteral("You have been kicked to area")).isEmpty(), qPrintable(received.join(" | ")));
+}
+
+void ProtocolTest::messagingCommandsReadDeclaredForms()
+{
+    // The text sanctions read an optional time like /mute, /forcepos takes
+    // a client or * for the whole area, and /charcurse an optional list.
+    using akashi::helpers::ParseError;
+    TestClient player; // client 0
+    joinServer(player);
+    TestClient mod; // client 1
+    joinServer(mod, 1);
+    loginAsModerator(mod);
+
+    const QString forced = oocReply(mod, QStringLiteral("/forcepos wit *"));
+    QVERIFY2(forced.contains(QStringLiteral("Forced 2 into pos wit.")), qPrintable(forced));
+    const QString forcedOne = oocReply(mod, QStringLiteral("/forcepos def 0"));
+    QVERIFY2(forcedOne.contains(QStringLiteral("Forced 1 into pos def.")), qPrintable(forcedOne));
+
+    const QString timed = oocReply(mod, QStringLiteral("/gimp 0 1d"));
+    QVERIFY2(timed.contains(QStringLiteral("The sanction lifts itself")), qPrintable(timed));
+    QVERIFY2(timed.contains(QStringLiteral("Gimped player.")), qPrintable(timed));
+    const QString badTime = oocReply(mod, QStringLiteral("/disemvowel 0 someday"));
+    QVERIFY2(badTime.contains(ParseError(ParseError::NotATime, QStringLiteral("someday"), QStringLiteral("until")).errorString()), qPrintable(badTime));
+    QVERIFY2(oocReply(mod, QStringLiteral("/ungimp 0")).contains(QStringLiteral("Ungimped player.")), "the gimp was not lifted");
+
+    const QString unknown = oocReply(mod, QStringLiteral("/charcurse 0 Phoenix,Nobody"));
+    QVERIFY2(unknown.contains(QStringLiteral("Could not find character: Nobody")), qPrintable(unknown));
+    QVERIFY(oocReply(mod, QStringLiteral("/charcurse 0 Phoenix,Edgeworth")).contains(QStringLiteral("Charcursed player.")));
+    QVERIFY(oocReply(mod, QStringLiteral("/uncharcurse 0")).contains(QStringLiteral("Uncharcursed player.")));
 }
 
 void ProtocolTest::emptyModpassBootGeneratesOne()

@@ -1,12 +1,19 @@
+#include "akashi/config_store.h"
+#include "commands/area_commands.h"
+#include "commands/plugin_commands.h"
+#include "commands/roleplay_commands.h"
+#include "commands/rule_commands.h"
 #include "core/client_session.h"
 #include "core/command_context.h"
 #include "core/command_params.h"
 #include "core/command_registry.h"
 #include "core/command_spec.h"
 #include "core/player_directory.h"
+#include "core/server_settings.h"
 #include "testtools/fake_transport.h"
 
 #include <QSet>
+#include <QTemporaryDir>
 #include <QTest>
 
 using akashi::Args;
@@ -80,6 +87,8 @@ class tst_CommandParams : public QObject
     void setpermsKeepsSuperBehindItsOwnForm_data();
     void setpermsKeepsSuperBehindItsOwnForm();
     void tiedWordRefusalsListEveryChoice();
+    void commandForms_data();
+    void commandForms();
     void usageIsGenerated();
     void registryRefusesBadlyMadeForms();
     void sensitiveParametersAreRedacted();
@@ -371,6 +380,116 @@ void tst_CommandParams::tiedWordRefusalsListEveryChoice()
     QCOMPARE(l_choice.error.error, ParseError::UnknownWord);
     QCOMPARE(l_choice.error.choices, (QStringList{QStringLiteral("duration"), QStringLiteral("reason")}));
     QCOMPARE(l_choice.error.errorString(), QStringLiteral("\"colour\" is not a valid field. Use one of: duration, reason."));
+}
+
+// The area commands whose forms carry a permission or a choice, as core
+// declares them: /cm keeps claiming an empty area behind area.cm, /uncm
+// tells "all" from a client, /removearea tells an ID from a name, and
+// /uninvite cannot reach a CM of the area.
+// The commands as core really registers them, so a form table checks the
+// shipped declarations rather than a copy of them.
+static CommandSpec registeredSpec(const QString &f_name)
+{
+    static QTemporaryDir s_dir;
+    static akashi::ConfigStore s_store(s_dir.path());
+    static ServerSettings s_settings(&s_store);
+    static akashi::CommandRegistry s_registry;
+    static const bool s_registered = [] {
+        s_settings.declare();
+        akashi::commands::registerAreaCommands(s_registry);
+        akashi::commands::registerRoleplayCommands(s_registry, s_settings);
+        akashi::commands::registerPluginCommands(s_registry);
+        akashi::commands::registerRuleCommands(s_registry);
+        return true;
+    }();
+    Q_UNUSED(s_registered)
+    return s_registry.spec(f_name).value_or(CommandSpec{});
+}
+
+void tst_CommandParams::commandForms_data()
+{
+    QTest::addColumn<QString>("command");
+    QTest::addColumn<QStringList>("arguments");
+    QTest::addColumn<QStringList>("permissions");
+    QTest::addColumn<QString>("form");
+    QTest::addColumn<ParseError::Error>("error");
+    QTest::addColumn<bool>("denied");
+
+    const QStringList l_user{QStringLiteral("user")};
+    const QStringList l_walk_in{QStringLiteral("user"), QStringLiteral("area.cm")};
+    const QStringList l_uncm{QStringLiteral("area.uncm")};
+    const QStringList l_floors{QStringLiteral("modify_floors")};
+    const QStringList l_uninvite{QStringLiteral("cm.uninvite"), QStringLiteral("super")};
+
+    QTest::newRow("cm: area.cm claims") << "cm" << QStringList{} << l_walk_in << "claim" << ParseError::NoError << false;
+    QTest::newRow("cm: without area.cm the open form answers") << "cm" << QStringList{} << l_user << "own" << ParseError::NoError << false;
+    QTest::newRow("cm: a target is the add form") << "cm" << QStringList{"1"} << l_user << "add" << ParseError::NoError << false;
+    QTest::newRow("cm: a target with area.cm too") << "cm" << QStringList{"1"} << l_walk_in << "add" << ParseError::NoError << false;
+    QTest::newRow("cm: no such client") << "cm" << QStringList{"3"} << l_user << "" << ParseError::NoSuchClient << false;
+    QTest::newRow("cm: nothing open") << "cm" << QStringList{} << QStringList{} << "" << ParseError::NoError << true;
+    QTest::newRow("uncm: your own") << "uncm" << QStringList{} << QStringList{"area.cm"} << "own" << ParseError::NoError << false;
+    QTest::newRow("uncm: all is a word") << "uncm" << QStringList{"all"} << l_uncm << "all" << ParseError::NoError << false;
+    QTest::newRow("uncm: another client") << "uncm" << QStringList{"2"} << l_uncm << "other" << ParseError::NoError << false;
+    QTest::newRow("uncm: others need area.uncm") << "uncm" << QStringList{"all"} << QStringList{"area.cm"} << "" << ParseError::NoError << true;
+    QTest::newRow("uncm: your own needs area.cm") << "uncm" << QStringList{} << l_uncm << "" << ParseError::NoError << true;
+    QTest::newRow("removearea: an ID") << "removearea" << QStringList{"3"} << l_floors << "id" << ParseError::NoError << false;
+    QTest::newRow("removearea: a name") << "removearea" << QStringList{"Bell", "Chamber"} << l_floors << "name" << ParseError::NoError << false;
+    QTest::newRow("removearea: no such ID reads as a name") << "removearea" << QStringList{"9"} << l_floors << "name" << ParseError::NoError << false;
+    QTest::newRow("uninvite: a client") << "uninvite" << QStringList{"2"} << l_uninvite << "run" << ParseError::NoError << false;
+    QTest::newRow("uninvite: a CM of this area, even for super") << "uninvite" << QStringList{"1"} << l_uninvite << "" << ParseError::Immune << false;
+
+    const QStringList l_timer{QStringLiteral("cm.timer")};
+    const QStringList l_global{QStringLiteral("cm.timer"), QStringLiteral("timer.global")};
+    QTest::newRow("timer: every timer") << "timer" << QStringList{} << l_timer << "list" << ParseError::NoError << false;
+    QTest::newRow("timer: one timer") << "timer" << QStringList{"2"} << l_timer << "show" << ParseError::NoError << false;
+    QTest::newRow("timer: viewing the global timer is open") << "timer" << QStringList{"0"} << l_timer << "show" << ParseError::NoError << false;
+    QTest::newRow("timer: an action") << "timer" << QStringList{"2", "start"} << l_timer << "action" << ParseError::NoError << false;
+    QTest::newRow("timer: a time") << "timer" << QStringList{"2", "00:05:00"} << l_timer << "set" << ParseError::NoError << false;
+    QTest::newRow("timer: altering timer 0 needs timer.global") << "timer" << QStringList{"0", "start"} << l_timer << "" << ParseError::NoError << true;
+    QTest::newRow("timer: with timer.global") << "timer" << QStringList{"0", "start"} << l_global << "global_action" << ParseError::NoError << false;
+    QTest::newRow("timer: global set") << "timer" << QStringList{"0", "00:01:00"} << l_global << "global_set" << ParseError::NoError << false;
+    QTest::newRow("timer: no such timer") << "timer" << QStringList{"5", "start"} << l_global << "" << ParseError::OutOfRange << false;
+
+    const QStringList l_roll{QStringLiteral("roleplay.roll")};
+    QTest::newRow("roll: one six-sided die") << "roll" << QStringList{} << l_roll << "plain" << ParseError::NoError << false;
+    QTest::newRow("roll: sides and count") << "roll" << QStringList{"20", "2"} << l_roll << "plain" << ParseError::NoError << false;
+    QTest::newRow("roll: notation") << "roll" << QStringList{"2d6+1"} << l_roll << "notation" << ParseError::NoError << false;
+    QTest::newRow("roll: neither") << "roll" << QStringList{"abc"} << l_roll << "" << ParseError::NotANumber << false;
+
+    const QStringList l_super{QStringLiteral("super")};
+    QTest::newRow("plugin: list") << "plugin" << QStringList{"list"} << l_super << "list" << ParseError::NoError << false;
+    QTest::newRow("plugin: unload with cascade") << "plugin" << QStringList{"unload", "akashi.x", "--cascade"} << l_super << "unload" << ParseError::NoError << false;
+    QTest::newRow("plugin: no such subcommand") << "plugin" << QStringList{"frob"} << l_super << "" << ParseError::UnknownWord << false;
+    QTest::newRow("plugin: needs super") << "plugin" << QStringList{"list"} << l_user << "" << ParseError::NoError << true;
+
+    QTest::newRow("floorrule: add") << "floorrule" << QStringList{"add", "ic_message_sent", "block", "message=No", "talking"} << l_floors << "add" << ParseError::NoError << false;
+    QTest::newRow("floorrule: remove") << "floorrule" << QStringList{"remove", "ic_message_sent"} << l_floors << "remove" << ParseError::NoError << false;
+    QTest::newRow("floorrule: no such mode") << "floorrule" << QStringList{"nuke", "ic_message_sent"} << l_floors << "" << ParseError::UnknownWord << false;
+}
+
+void tst_CommandParams::commandForms()
+{
+    QFETCH(QString, command);
+    QFETCH(QStringList, arguments);
+    QFETCH(QStringList, permissions);
+    QFETCH(QString, form);
+    QFETCH(ParseError::Error, error);
+    QFETCH(bool, denied);
+
+    FakeScope l_scope;
+    l_scope.area_owners.insert(1);
+    for (const QString &l_permission : std::as_const(permissions))
+        l_scope.invoker_permissions.insert(l_permission);
+    const CommandSpec l_spec = registeredSpec(command);
+    QVERIFY2(!l_spec.variants.isEmpty(), qPrintable("no declared command " + command));
+    const auto l_can = [&permissions](const QString &f_permission) { return permissions.contains(f_permission); };
+
+    const akashi::FormChoice l_choice = akashi::chooseForm(l_spec, arguments, l_scope, l_can);
+    QCOMPARE(l_choice.form ? l_choice.form->id : QString(), form);
+    QCOMPARE(l_choice.denied, denied);
+    if (!form.isEmpty() || denied)
+        return;
+    QCOMPARE(l_choice.error.error, error);
 }
 
 void tst_CommandParams::usageIsGenerated()
