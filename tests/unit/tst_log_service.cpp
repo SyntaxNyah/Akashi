@@ -60,6 +60,8 @@ class tst_LogService : public QObject
     void formatUnknownTypeIsEmpty();
     void emptyAreaBucketsUnderServer();
     void customTemplate();
+    void userTextStaysLiteral_data();
+    void userTextStaysLiteral();
 };
 
 void tst_LogService::bufferRoundTrip()
@@ -485,6 +487,39 @@ void tst_LogService::customTemplate()
 
     QString l_formatted = l_service.formatEvent(l_event);
     QCOMPARE(l_formatted, QStringLiteral("Maya did channeling in Temple"));
+}
+
+void tst_LogService::userTextStaysLiteral_data()
+{
+    QTest::addColumn<QString>("message");
+    QTest::addColumn<QString>("expected");
+
+    QTest::newRow("plain") << "hello" << "[beef] Maya: hello";
+    QTest::newRow("placeholder after it") << "{target_ipid}" << "[beef] Maya: {target_ipid}";
+    QTest::newRow("placeholder before it") << "{ipid}" << "[beef] Maya: {ipid}";
+    QTest::newRow("newline") << "hi\n[beef] Edgeworth: forged" << "[beef] Maya: hi\\n[beef] Edgeworth: forged";
+    QTest::newRow("carriage return") << "hi\rforged" << "[beef] Maya: hi\\rforged";
+}
+
+// A player's text fills one placeholder once: placeholders in it stay text
+// and its line breaks cannot start a forged log line.
+void tst_LogService::userTextStaysLiteral()
+{
+    QFETCH(QString, message);
+    QFETCH(QString, expected);
+
+    akashi::LogService l_service(nullptr);
+    l_service.registerTemplate(QStringLiteral("custom_plugin"),
+                               QStringLiteral("[{ipid}] {char_name}: {message}{target_ipid}"));
+
+    akashi::LogEvent l_event;
+    l_event.timestamp = 1000;
+    l_event.type = QStringLiteral("custom_plugin");
+    l_event.ipid = QStringLiteral("beef");
+    l_event.char_name = QStringLiteral("Maya");
+    l_event.message = message;
+
+    QCOMPARE(l_service.formatEvent(l_event), expected);
 }
 
 } // namespace unittests

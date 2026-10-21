@@ -6,6 +6,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QThread>
@@ -306,20 +307,40 @@ QString LogService::applyTemplate(const QString &f_tmpl, const LogEvent &f_event
     const QString l_timestamp = QDateTime::fromMSecsSinceEpoch(f_event.timestamp)
                                     .toString(QStringLiteral("ddd MMMM d yyyy | hh:mm:ss"));
 
-    QString l_result = f_tmpl;
-    l_result.replace(QStringLiteral("{timestamp}"), l_timestamp);
-    l_result.replace(QStringLiteral("{area}"), f_event.area);
-    l_result.replace(QStringLiteral("{char_name}"), f_event.char_name);
-    l_result.replace(QStringLiteral("{ooc_name}"), f_event.ooc_name);
-    l_result.replace(QStringLiteral("{ipid}"), f_event.ipid);
-    l_result.replace(QStringLiteral("{client_id}"), f_event.client_id);
-    l_result.replace(QStringLiteral("{message}"), f_event.message);
-    l_result.replace(QStringLiteral("{args}"), f_event.args);
-    l_result.replace(QStringLiteral("{moderator}"), f_event.moderator);
-    l_result.replace(QStringLiteral("{target_ipid}"), f_event.target_ipid);
-    l_result.replace(QStringLiteral("{duration}"), f_event.duration);
-    l_result.replace(QStringLiteral("{hwid}"), f_event.hwid);
-    l_result.replace(QStringLiteral("{success}"), f_event.success ? QStringLiteral("SUCCESS") : QStringLiteral("FAILED"));
+    const QHash<QString, QString> l_values = {
+        {QStringLiteral("timestamp"), l_timestamp},
+        {QStringLiteral("area"), f_event.area},
+        {QStringLiteral("char_name"), f_event.char_name},
+        {QStringLiteral("ooc_name"), f_event.ooc_name},
+        {QStringLiteral("ipid"), f_event.ipid},
+        {QStringLiteral("client_id"), f_event.client_id},
+        {QStringLiteral("message"), f_event.message},
+        {QStringLiteral("args"), f_event.args},
+        {QStringLiteral("moderator"), f_event.moderator},
+        {QStringLiteral("target_ipid"), f_event.target_ipid},
+        {QStringLiteral("duration"), f_event.duration},
+        {QStringLiteral("hwid"), f_event.hwid},
+        {QStringLiteral("success"), f_event.success ? QStringLiteral("SUCCESS") : QStringLiteral("FAILED")},
+    };
+
+    // One pass over the template, so a value that contains "{ipid}" stays
+    // text, and line breaks in values are escaped so they cannot forge lines.
+    static const QRegularExpression l_placeholder(QStringLiteral("\\{([a-z_]+)\\}"));
+    QString l_result;
+    qsizetype l_last = 0;
+    for (const QRegularExpressionMatch &l_match : l_placeholder.globalMatch(f_tmpl)) {
+        const auto l_value = l_values.constFind(l_match.captured(1));
+        if (l_value == l_values.constEnd()) {
+            continue;
+        }
+        l_result += f_tmpl.mid(l_last, l_match.capturedStart() - l_last);
+        QString l_text = l_value.value();
+        l_text.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+        l_text.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+        l_result += l_text;
+        l_last = l_match.capturedEnd();
+    }
+    l_result += f_tmpl.mid(l_last);
     return l_result;
 }
 
