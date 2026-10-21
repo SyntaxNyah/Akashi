@@ -1760,6 +1760,11 @@ akashi::ClientSession *ServerContext::clientById(int id) const
     return m_player_directory.clientById(id);
 }
 
+const akashi::PlayerDirectory &ServerContext::playerDirectory() const
+{
+    return m_player_directory;
+}
+
 int ServerContext::playerCount() const
 {
     return m_player_count;

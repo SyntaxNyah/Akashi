@@ -29,6 +29,8 @@ class tst_PlayerDirectory : public QObject
     void resolvesAsAServiceFromTheRegistry();
     void ipKeyGroupsIpv4AndMappedIpv6();
     void countsConnectionsPerIp();
+    void find_data();
+    void find();
 
   private:
     akashi::ClientSession *makeClient(int f_id);
@@ -240,6 +242,65 @@ void tst_PlayerDirectory::countsConnectionsPerIp()
     delete l_a1;
     delete l_a2;
     delete l_b1;
+}
+
+// One table for every way typed input can name, or fail to name, a
+// client. Client 0 stands in area 2, client 1 in area 3, and ID 2 is free.
+void tst_PlayerDirectory::find_data()
+{
+    QTest::addColumn<QString>("text");
+    QTest::addColumn<int>("exclude_id");
+    QTest::addColumn<int>("in_area");
+    QTest::addColumn<bool>("accepted");
+    QTest::addColumn<int>("found_id");
+    QTest::addColumn<QString>("reason");
+
+    QTest::newRow("connected client") << "1" << -1 << -1 << true << 1 << "";
+    QTest::newRow("word") << "bob" << -1 << -1 << false << -1 << "\"bob\" is not a valid client ID.";
+    QTest::newRow("empty") << "" << -1 << -1 << false << -1 << "\"\" is not a valid client ID.";
+    QTest::newRow("trailing junk") << "1x" << -1 << -1 << false << -1 << "\"1x\" is not a valid client ID.";
+    QTest::newRow("too large") << "99999999999" << -1 << -1 << false << -1 << "99999999999 is too large for a client ID.";
+    QTest::newRow("free ID") << "2" << -1 << -1 << false << -1 << "No client with ID 2 is connected.";
+    QTest::newRow("ID past the pool") << "999" << -1 << -1 << false << -1 << "No client with ID 999 is connected.";
+    QTest::newRow("negative ID") << "-1" << -1 << -1 << false << -1 << "No client with ID -1 is connected.";
+    QTest::newRow("excluded self") << "0" << 0 << -1 << false << -1 << "You cannot target yourself with this command.";
+    QTest::newRow("someone else past the exclusion") << "1" << 0 << -1 << true << 1 << "";
+    QTest::newRow("in the area") << "0" << -1 << 2 << true << 0 << "";
+    QTest::newRow("in another area") << "1" << -1 << 2 << false << -1 << "Client 1 is not in this area.";
+    QTest::newRow("both filters pass") << "1" << 0 << 3 << true << 1 << "";
+    QTest::newRow("both filters, excluded first") << "0" << 0 << 3 << false << -1 << "You cannot target yourself with this command.";
+}
+
+void tst_PlayerDirectory::find()
+{
+    QFETCH(QString, text);
+    QFETCH(int, exclude_id);
+    QFETCH(int, in_area);
+    QFETCH(bool, accepted);
+    QFETCH(int, found_id);
+    QFETCH(QString, reason);
+
+    PlayerDirectory l_directory;
+    l_directory.setCapacity(3);
+    akashi::ClientSession *l_first = makeClient(0);
+    akashi::ClientSession *l_second = makeClient(1);
+    l_directory.addClient(0, l_first);
+    l_directory.addClient(1, l_second);
+    l_first->setAreaId(2);
+    l_second->setAreaId(3);
+
+    const auto l_found = l_directory.find(text, {.exclude_id = exclude_id, .in_area = in_area});
+    QCOMPARE(l_found.ok(), accepted);
+    if (accepted) {
+        QCOMPARE(*l_found, l_directory.clientById(found_id));
+        QCOMPARE(l_found.error(), QString());
+    }
+    else {
+        QCOMPARE(l_found.error(), reason);
+    }
+
+    delete l_first;
+    delete l_second;
 }
 
 }

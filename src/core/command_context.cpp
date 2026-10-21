@@ -175,17 +175,26 @@ void CommandContext::sendPacket(const QString &f_header, const QStringList &f_fi
     m_invoker->sendPacket(f_header, f_fields);
 }
 
-std::optional<TargetPlayer> CommandContext::resolveTarget(int f_argument_index)
+akashi::ClientSession *CommandContext::self() const
 {
-    if (auto l_id = argumentAsInt(f_argument_index)) {
-        akashi::ClientSession *l_client = m_server->clientById(*l_id);
-        if (l_client) {
-            return TargetPlayer(l_client);
-        }
-        reply("No client with ID " + m_arguments.at(f_argument_index) + " found.");
-        return std::nullopt;
+    return m_invoker;
+}
+
+akashi::ClientSession *CommandContext::findClient(int f_argument_index, const PlayerFilter &f_filter)
+{
+    const auto l_found = m_server->playerDirectory().find(argument(f_argument_index), f_filter);
+    if (!l_found) {
+        reply(l_found.error());
+        return nullptr;
     }
-    reply("That does not look like a valid ID.");
+    return *l_found;
+}
+
+std::optional<TargetPlayer> CommandContext::resolveTarget(int f_argument_index, const PlayerFilter &f_filter)
+{
+    if (akashi::ClientSession *l_client = findClient(f_argument_index, f_filter)) {
+        return TargetPlayer(l_client);
+    }
     return std::nullopt;
 }
 

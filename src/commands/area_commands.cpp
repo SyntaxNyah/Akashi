@@ -80,7 +80,7 @@ void cmdArea(CommandContext &f_context)
             f_context.reply("That does not look like a valid area ID.");
             return;
         }
-        akashi::ClientSession *l_client = l_server->clientById(f_context.clientId());
+        akashi::ClientSession *l_client = f_context.self();
         if (l_client) {
             l_client->changeArea(*l_new_area);
         }
@@ -94,7 +94,7 @@ void cmdCm(CommandContext &f_context)
 {
     QString l_sender_name = f_context.name();
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -118,14 +118,8 @@ void cmdCm(CommandContext &f_context)
         f_context.reply("You cannot become a CM in this area when someone else is. You must be CM'ed by an existing one.");
     }
     else if (f_context.argc() == 1) {
-        bool ok;
-        akashi::ClientSession *l_owner_candidate = f_context.server()->clientById(f_context.argument(0).toInt(&ok));
-        if (!ok) {
-            f_context.reply("That doesn't look like a valid ID.");
-            return;
-        }
-        if (l_owner_candidate == nullptr) {
-            f_context.reply("Unable to find client with ID " + f_context.argument(0) + ".");
+        akashi::ClientSession *l_owner_candidate = f_context.findClient(0);
+        if (!l_owner_candidate) {
             return;
         }
         if (l_area->owners().contains(l_owner_candidate->clientId())) {
@@ -155,7 +149,7 @@ void cmdUncmOwn(CommandContext &f_context)
         return;
     }
 
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -174,7 +168,7 @@ void cmdUncmOther(CommandContext &f_context)
         return;
     }
 
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -198,19 +192,13 @@ void cmdUncmOther(CommandContext &f_context)
         return;
     }
 
-    bool conv_ok = false;
-    const int l_uid = f_context.argument(0).toInt(&conv_ok);
-    if (!conv_ok) {
-        f_context.reply("Invalid user ID.");
+    akashi::ClientSession *l_target = f_context.findClient(0);
+    if (!l_target) {
         return;
     }
+    const int l_uid = l_target->clientId();
     if (!l_area->owners().contains(l_uid)) {
         f_context.reply("That user is not CMed.");
-        return;
-    }
-    akashi::ClientSession *l_target = f_context.server()->clientById(l_uid);
-    if (l_target == nullptr) {
-        f_context.reply("No client with that ID found.");
         return;
     }
     if (auto l_refusal = l_client->removeAreaOwner(l_uid)) {
@@ -224,42 +212,27 @@ void cmdUncmOther(CommandContext &f_context)
 void cmdInvite(CommandContext &f_context)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    bool ok;
-    int l_invited_id = f_context.argument(0).toInt(&ok);
-    if (!ok) {
-        f_context.reply("That does not look like a valid ID.");
+    akashi::ClientSession *target_client = f_context.findClient(0);
+    if (!target_client) {
         return;
     }
-
-    akashi::ClientSession *target_client = f_context.server()->clientById(l_invited_id);
-    if (target_client == nullptr) {
-        f_context.reply("No client with that ID found.");
-        return;
-    }
-    else if (!l_area->invite(l_invited_id)) {
+    if (!l_area->invite(target_client->clientId())) {
         f_context.reply("That ID is already on the invite list.");
         return;
     }
-    f_context.reply("You invited ID " + f_context.argument(0));
+    f_context.reply("You invited ID " + QString::number(target_client->clientId()));
     target_client->sendServerMessage("You were invited and given access to " + l_area->name());
 }
 
 void cmdUninvite(CommandContext &f_context)
 {
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
-    bool ok;
-    int l_uninvited_id = f_context.argument(0).toInt(&ok);
-    if (!ok) {
-        f_context.reply("That does not look like a valid ID.");
+    akashi::ClientSession *target_client = f_context.findClient(0);
+    if (!target_client) {
         return;
     }
-
-    akashi::ClientSession *target_client = f_context.server()->clientById(l_uninvited_id);
-    if (target_client == nullptr) {
-        f_context.reply("No client with that ID found.");
-        return;
-    }
-    else if (f_context.targetIsImmune(l_uninvited_id)) {
+    const int l_uninvited_id = target_client->clientId();
+    if (f_context.targetIsImmune(l_uninvited_id)) {
         f_context.reply("You cannot uninvite a CM!");
         return;
     }
@@ -267,7 +240,7 @@ void cmdUninvite(CommandContext &f_context)
         f_context.reply("That ID is not on the invite list.");
         return;
     }
-    f_context.reply("You uninvited ID " + f_context.argument(0));
+    f_context.reply("You uninvited ID " + QString::number(l_uninvited_id));
     target_client->sendServerMessage("You were uninvited from " + l_area->name());
 }
 
@@ -278,7 +251,7 @@ void cmdAreaLock(CommandContext &f_context)
         f_context.reply("This area is already locked.");
         return;
     }
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -296,7 +269,7 @@ void cmdAreaSpectate(CommandContext &f_context)
         f_context.reply("This area is already in spectate mode.");
         return;
     }
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -314,7 +287,7 @@ void cmdAreaUnlock(CommandContext &f_context)
         f_context.reply("This area is not locked.");
         return;
     }
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -359,34 +332,23 @@ void cmdAreaKick(CommandContext &f_context)
         return;
     }
 
-    bool ok;
-    int l_idx = f_context.argument(0).toInt(&ok);
-    if (!ok) {
-        f_context.reply("That does not look like a valid ID.");
+    akashi::ClientSession *l_client_to_kick = f_context.findClient(0, {.in_area = f_context.areaId()});
+    if (!l_client_to_kick) {
         return;
     }
-    if (f_context.targetIsImmune(l_idx)) {
+    if (f_context.targetIsImmune(l_client_to_kick->clientId())) {
         f_context.reply("You cannot kick another CM!");
-        return;
-    }
-    akashi::ClientSession *l_client_to_kick = f_context.server()->clientById(l_idx);
-    if (l_client_to_kick == nullptr) {
-        f_context.reply("No client with that ID found.");
-        return;
-    }
-    else if (l_client_to_kick->areaId() != f_context.areaId()) {
-        f_context.reply("That client is not in this area.");
         return;
     }
     l_client_to_kick->changeArea(target_area_id);
     l_area->uninvite(l_client_to_kick->clientId());
     l_client_to_kick->sendServerMessage("You have been kicked to area " + target_area->displayName() + ".");
-    f_context.reply("Client " + f_context.argument(0) + " kicked to area " + target_area->displayName() + ".");
+    f_context.reply("Client " + QString::number(l_client_to_kick->clientId()) + " kicked to area " + target_area->displayName() + ".");
 }
 
 void cmdBackground(CommandContext &f_context)
 {
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -403,7 +365,7 @@ void cmdBackground(CommandContext &f_context)
 
 void cmdSide(CommandContext &f_context)
 {
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -445,7 +407,7 @@ void cmdUnlockBackground(CommandContext &f_context)
 
 void cmdStatus(CommandContext &f_context)
 {
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -571,7 +533,7 @@ void cmdFloor(CommandContext &f_context)
         return;
     }
 
-    akashi::ClientSession *l_client = l_server->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (l_client) {
         l_client->changeArea(l_floor->area_ids.first());
     }

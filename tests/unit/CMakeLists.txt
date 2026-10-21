@@ -38,6 +38,8 @@ set(UNIT_TESTS
     medieval_parser
     text_utils
     command_registry
+    helpers_checks
+    helpers_parse
     permission_registry
     console_menu
     event_registry

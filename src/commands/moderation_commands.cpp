@@ -1,5 +1,6 @@
 #include "commands/moderation_commands.h"
 
+#include "akashi/helpers/parse.h"
 #include "akashi/scheduler.h"
 #include "akashi/service_registry.h"
 #include "core/client_session.h"
@@ -24,49 +25,6 @@
 #include <utility>
 
 namespace akashi::commands {
-
-static long long parseTime(const QString &f_input)
-{
-    static const QRegularExpression s_duration("(?:(?:(?<year>.*?)y)*(?:(?<week>.*?)w)*(?:(?<day>.*?)d)*(?:(?<hr>.*?)h)*(?:(?<min>.*?)m)*(?:(?<sec>.*?)s)*)");
-    QRegularExpressionMatch match = s_duration.match(f_input);
-    QString str_year, str_week, str_hour, str_day, str_minute, str_second;
-    int year, week, day, hour, minute, second;
-
-    str_year = match.captured("year");
-    str_week = match.captured("week");
-    str_day = match.captured("day");
-    str_hour = match.captured("hr");
-    str_minute = match.captured("min");
-    str_second = match.captured("sec");
-
-    bool l_is_well_formed = false;
-    QString concat_str(str_year + str_week + str_day + str_hour + str_minute + str_second);
-    concat_str.toInt(&l_is_well_formed);
-
-    if (!l_is_well_formed) {
-        return -1;
-    }
-
-    year = str_year.toInt();
-    week = str_week.toInt();
-    day = str_day.toInt();
-    hour = str_hour.toInt();
-    minute = str_minute.toInt();
-    second = str_second.toInt();
-
-    long long l_total = 0;
-    l_total += 31622400 * year;
-    l_total += 604800 * week;
-    l_total += 86400 * day;
-    l_total += 3600 * hour;
-    l_total += 60 * minute;
-    l_total += second;
-
-    if (l_total < 0)
-        return -1;
-
-    return l_total;
-}
 
 static QString reprimand(ServerContext *f_server, bool f_positive = false)
 {
@@ -106,12 +64,13 @@ void cmdBan(CommandContext &f_context)
     long long l_duration_seconds = 0;
     if (f_context.argument(1) == "perma")
         l_duration_seconds = -2;
-    else
-        l_duration_seconds = parseTime(f_context.argument(1));
-
-    if (l_duration_seconds == -1) {
-        f_context.reply("Invalid time format. Format example: 1h30m");
-        return;
+    else {
+        const auto l_duration = helpers::parseDuration(f_context.argument(1));
+        if (!l_duration) {
+            f_context.reply(l_duration.error());
+            return;
+        }
+        l_duration_seconds = *l_duration;
     }
 
     QString l_moderator;
@@ -432,13 +391,11 @@ static QString whyLine(CommandContext &f_context, akashi::ClientSession *f_subje
 void cmdWhy(CommandContext &f_context)
 {
     // The two-argument form asks about another player.
-    akashi::ClientSession *l_subject = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_subject = f_context.self();
     QString l_query = f_context.argument(0);
     if (f_context.argc() == 2) {
-        const auto l_target_id = f_context.argumentAsInt(0);
-        akashi::ClientSession *l_target = l_target_id ? f_context.server()->clientById(*l_target_id) : nullptr;
+        akashi::ClientSession *l_target = f_context.findClient(0);
         if (!l_target) {
-            f_context.reply("No client with that ID found.");
             return;
         }
         l_subject = l_target;
@@ -620,10 +577,8 @@ bool applySanction(CommandContext &f_context, TargetPlayer &f_target, const QStr
     // The issuer never sweeps themselves in by sharing an IP or machine
     // with the target; targeting their own id on purpose still works.
     akashi::ClientSession *l_exempt = nullptr;
-    bool l_id_ok = false;
-    const int l_target_id = f_context.argument(0).toInt(&l_id_ok);
-    if (l_id_ok && l_target_id != f_context.clientId()) {
-        l_exempt = f_context.server()->clientById(f_context.clientId());
+    if (f_target.clientId() != f_context.clientId()) {
+        l_exempt = f_context.self();
     }
     f_context.server()->applySanction(f_target.ipid(), f_target.hwid(), f_sanction_id, l_moderator, l_until, f_data, l_exempt);
     if (l_until.has_value()) {
@@ -823,11 +778,11 @@ void cmdKickUid(CommandContext &f_context)
         }
     }
 
-    if (auto l_target = f_context.resolveTarget()) {
+    if (akashi::ClientSession *l_target = f_context.findClient(0)) {
         const QString l_moderator = f_context.server()->authType() == AuthType::ADVANCED
                                         ? f_context.moderatorName()
                                         : QStringLiteral("Moderator");
-        f_context.server()->kickClients({f_context.server()->clientById(l_target->clientId())}, l_target->ipid(), l_reason, l_moderator);
+        f_context.server()->kickClients({l_target}, l_target->ipid(), l_reason, l_moderator);
         f_context.reply("Kicked client with UID " + f_context.argument(0) + " for reason: " + l_reason);
     }
 }
@@ -843,13 +798,16 @@ void cmdUpdateBan(CommandContext &f_context)
     QVariant l_updated_info;
     if (f_context.argument(1) == "duration") {
         long long l_duration_seconds = 0;
-        if (f_context.argument(2) == "perma")
+        if (f_context.argument(2) == "perma") {
             l_duration_seconds = -2;
-        else
-            l_duration_seconds = parseTime(f_context.argument(2));
-        if (l_duration_seconds == -1) {
-            f_context.reply("Invalid time format. Format example: 1h30m");
-            return;
+        }
+        else {
+            const auto l_duration = helpers::parseDuration(f_context.argument(2));
+            if (!l_duration) {
+                f_context.reply(l_duration.error());
+                return;
+            }
+            l_duration_seconds = *l_duration;
         }
         l_updated_info = QVariant(l_duration_seconds);
     }

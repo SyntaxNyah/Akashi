@@ -1,5 +1,6 @@
 #pragma once
 
+#include "akashi/helpers/checks.h"
 #include "akashi_core_export.h"
 
 #include <QString>
@@ -13,7 +14,7 @@ namespace akashi {
 class AKASHI_CORE_EXPORT ConfigEntry
 {
   public:
-    using Check = std::function<bool(const QVariant &)>;
+    using Check = helpers::Check;
 
     ConfigEntry(const QString &f_key, const QVariant &f_default, const QString &f_description, Check f_check = {});
 

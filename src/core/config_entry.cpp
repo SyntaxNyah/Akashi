@@ -1,7 +1,8 @@
 #include "akashi/config_entry.h"
 
-#include <QTime>
-#include <QUrl>
+#include "akashi/helpers/checks.h"
+
+#include <utility>
 
 namespace akashi {
 
@@ -37,68 +38,46 @@ bool ConfigEntry::checkValue(const QVariant &f_value) const
     return m_check ? m_check(f_value) : true;
 }
 
+// The checks themselves live in akashi.helpers, so a range or a word list
+// means the same thing in a config file as anywhere else.
 ConfigEntry::Check inRange(double f_min, double f_max)
 {
-    return [f_min, f_max](const QVariant &f_value) {
-        const double l_number = f_value.toDouble();
-        return l_number >= f_min && l_number <= f_max;
-    };
+    return helpers::inRange(f_min, f_max);
 }
 
 ConfigEntry::Check atLeast(double f_min)
 {
-    return [f_min](const QVariant &f_value) {
-        return f_value.toDouble() >= f_min;
-    };
+    return helpers::atLeast(f_min);
 }
 
 ConfigEntry::Check atMost(double f_max)
 {
-    return [f_max](const QVariant &f_value) {
-        return f_value.toDouble() <= f_max;
-    };
+    return helpers::atMost(f_max);
 }
 
 ConfigEntry::Check allOf(const QList<ConfigEntry::Check> &f_checks)
 {
-    return [f_checks](const QVariant &f_value) {
-        for (const ConfigEntry::Check &l_check : f_checks) {
-            if (!l_check(f_value)) {
-                return false;
-            }
-        }
-        return true;
-    };
+    return helpers::allOf(f_checks);
 }
 
 ConfigEntry::Check oneOf(const QStringList &f_words)
 {
-    return [f_words](const QVariant &f_value) {
-        return f_words.contains(f_value.toString(), Qt::CaseInsensitive);
-    };
+    return helpers::oneOf(f_words);
 }
 
 ConfigEntry::Check emptyOrTime()
 {
-    return [](const QVariant &f_value) {
-        return f_value.toString().isEmpty() || f_value.toTime().isValid();
-    };
+    return helpers::emptyOrTime();
 }
 
 ConfigEntry::Check url()
 {
-    return [](const QVariant &f_value) {
-        const QUrl l_url(f_value.toString(), QUrl::StrictMode);
-        return l_url.isValid() && !l_url.host().isEmpty() &&
-               (l_url.scheme() == QStringLiteral("http") || l_url.scheme() == QStringLiteral("https"));
-    };
+    return helpers::url();
 }
 
 ConfigEntry::Check emptyOr(ConfigEntry::Check f_check)
 {
-    return [f_check = std::move(f_check)](const QVariant &f_value) {
-        return f_value.toString().isEmpty() || !f_check || f_check(f_value);
-    };
+    return helpers::emptyOr(std::move(f_check));
 }
 
 } // namespace akashi

@@ -1,6 +1,7 @@
 #include "commands/messaging_commands.h"
 
 #include "akashi/event.h"
+#include "akashi/helpers/parse.h"
 #include "akashi/permissions.h"
 #include "commands/moderation_commands.h"
 #include "core/client_session.h"
@@ -45,30 +46,22 @@ static void announceGlobalMessage(CommandContext &f_context, const QString &f_ch
 
 void cmdPos(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->changePosition(f_context.argument(0));
 }
 
 void cmdForcePos(CommandContext &f_context)
 {
-    bool ok;
     QList<akashi::ClientSession *> l_targets;
-    int l_target_id = f_context.argument(1).toInt(&ok);
     int l_forced_clients = 0;
-    if (!ok && f_context.argument(1) != "*") {
-        f_context.reply("That does not look like a valid ID.");
-        return;
-    }
-    else if (ok) {
-        akashi::ClientSession *l_target_client = f_context.server()->clientById(l_target_id);
-        if (l_target_client != nullptr)
-            l_targets.append(l_target_client);
-        else {
-            f_context.reply("Target ID not found!");
+    if (f_context.argument(1) != "*") {
+        akashi::ClientSession *l_target_client = f_context.findClient(1);
+        if (!l_target_client) {
             return;
         }
+        l_targets.append(l_target_client);
     }
-    else if (f_context.argument(1) == "*") {
+    else {
         const QVector<akashi::ClientSession *> l_clients = f_context.server()->clients();
         for (akashi::ClientSession *l_client : l_clients) {
             if (l_client->areaId() == f_context.areaId())
@@ -105,7 +98,7 @@ void cmdNeed(CommandContext &f_context)
 
 void cmdSwitch(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     int l_selected_char_id = f_context.server()->characterId(f_context.arguments().join(" "));
     if (l_selected_char_id == -1) {
         f_context.reply("That does not look like a valid character.");
@@ -120,7 +113,7 @@ void cmdSwitch(CommandContext &f_context)
 
 void cmdRandomChar(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
 
     // Collect the free characters in one pass. The old retry loop drew random
@@ -147,7 +140,7 @@ void cmdRandomChar(CommandContext &f_context)
 
 void cmdToggleGlobal(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->setGlobalEnabled(!l_self->isGlobalEnabled());
     QString l_str_en = l_self->isGlobalEnabled() ? "shown" : "hidden";
     f_context.reply("Global chat set to " + l_str_en);
@@ -155,25 +148,17 @@ void cmdToggleGlobal(CommandContext &f_context)
 
 void cmdPM(CommandContext &f_context)
 {
-    bool ok;
-    int l_target_id = f_context.argument(0).toInt(&ok);
-    if (!ok) {
-        f_context.reply("That does not look like a valid ID.");
-        return;
-    }
-    akashi::ClientSession *l_target_client = f_context.server()->clientById(l_target_id);
-    if (l_target_client == nullptr) {
-        f_context.reply("No client with that ID found.");
+    akashi::ClientSession *l_target_client = f_context.findClient(0);
+    if (!l_target_client) {
         return;
     }
     if (l_target_client->isPmMuted()) {
         f_context.reply("That user is not recieving PMs.");
         return;
     }
-    QStringList l_rest = f_context.arguments().mid(1);
-    QString l_message = l_rest.join(" ");
+    const QString l_message = helpers::joinFrom(f_context.arguments(), 1);
     l_target_client->sendServerMessage("Message from " + f_context.name() + " (" + QString::number(f_context.clientId()) + "): " + l_message);
-    f_context.reply("PM sent to " + QString::number(l_target_id) + ". Message: " + l_message);
+    f_context.reply("PM sent to " + QString::number(l_target_client->clientId()) + ". Message: " + l_message);
     announceGlobalMessage(f_context, QStringLiteral("pm"), l_message);
 }
 
@@ -330,7 +315,7 @@ void cmdMedievalMode(CommandContext &f_context)
 
 void cmdMutePM(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->setPmMuted(!l_self->isPmMuted());
     QString l_str_en = l_self->isPmMuted() ? "muted" : "unmuted";
     f_context.reply("PM's are now " + l_str_en);
@@ -338,7 +323,7 @@ void cmdMutePM(CommandContext &f_context)
 
 void cmdToggleAdverts(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->setAdvertEnabled(!l_self->isAdvertEnabled());
     QString l_str_en = l_self->isAdvertEnabled() ? "on" : "off";
     f_context.reply("Advertisements turned " + l_str_en);
@@ -346,7 +331,7 @@ void cmdToggleAdverts(CommandContext &f_context)
 
 void cmdAfk(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->setAfk(true);
     f_context.reply("You are now AFK.");
     l_self->setCharacterName(l_self->characterName() + " [AFK]");
@@ -354,16 +339,8 @@ void cmdAfk(CommandContext &f_context)
 
 void cmdCharCurse(CommandContext &f_context)
 {
-    bool conv_ok = false;
-    int l_uid = f_context.argument(0).toInt(&conv_ok);
-    if (!conv_ok) {
-        f_context.reply("Invalid user ID.");
-        return;
-    }
-
-    akashi::ClientSession *l_target = f_context.server()->clientById(l_uid);
-    if (l_target == nullptr) {
-        f_context.reply("No client with that ID found.");
+    akashi::ClientSession *l_target = f_context.findClient(0);
+    if (!l_target) {
         return;
     }
 
@@ -400,7 +377,7 @@ void cmdCharCurse(CommandContext &f_context)
     const QString l_moderator = f_context.server()->authType() == AuthType::ADVANCED
                                     ? f_context.moderatorName()
                                     : QStringLiteral("moderator");
-    akashi::ClientSession *l_issuer = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_issuer = f_context.self();
     const QList<akashi::ClientSession *> l_affected = f_context.server()->applySanction(
         l_target->ipid(), l_target->hwid(), sanction::charcurse, l_moderator, std::nullopt, l_char_names.join(","),
         l_issuer == l_target ? nullptr : l_issuer);
@@ -420,16 +397,8 @@ void cmdCharCurse(CommandContext &f_context)
 
 void cmdUnCharCurse(CommandContext &f_context)
 {
-    bool conv_ok = false;
-    int l_uid = f_context.argument(0).toInt(&conv_ok);
-    if (!conv_ok) {
-        f_context.reply("Invalid user ID.");
-        return;
-    }
-
-    akashi::ClientSession *l_target = f_context.server()->clientById(l_uid);
-    if (l_target == nullptr) {
-        f_context.reply("No client with that ID found.");
+    akashi::ClientSession *l_target = f_context.findClient(0);
+    if (!l_target) {
         return;
     }
 
@@ -447,7 +416,7 @@ void cmdUnCharCurse(CommandContext &f_context)
 
 void cmdCharSelect(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->takeCharacter(-1, true);
 }
 
@@ -503,7 +472,7 @@ void cmdS(CommandContext &f_context)
 
 void cmdFirstPerson(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->setFirstPerson(!l_self->isFirstPerson());
     QString l_str_en = l_self->isFirstPerson() ? "enabled" : "disabled";
     f_context.reply("First person mode " + l_str_en + ".");

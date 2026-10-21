@@ -185,6 +185,7 @@ target_compile_definitions(akashi_sdk INTERFACE QT_NO_KEYWORDS)
 
 # The protocol and world layers: static libraries folded into the
 # akashi_core library, each with its own public include directory.
+add_subdirectory(src/helpers)
 add_subdirectory(src/proto)
 add_subdirectory(src/world)
 
@@ -194,6 +195,7 @@ generate_export_header(akashi_core BASE_NAME AKASHI_CORE)
 target_include_directories(akashi_core
     PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/core/include>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/helpers/include>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/proto/include>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/world/include>"
         "$<INSTALL_INTERFACE:include>"
@@ -225,6 +227,7 @@ target_link_libraries(akashi_core
         Qt6::Network
         Qt6::WebSockets
     PRIVATE
+        akashi_helpers
         akashi_proto
         akashi_world
 )
@@ -270,6 +273,7 @@ install(TARGETS akashi_core akashi_sdk akashi_pluginapi EXPORT akashiTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)
 install(DIRECTORY src/include/ DESTINATION include)
+install(DIRECTORY src/helpers/include/ DESTINATION include)
 install(DIRECTORY src/proto/include/ DESTINATION include)
 install(DIRECTORY src/world/include/ DESTINATION include)
 install(DIRECTORY src/core/include/ DESTINATION include)

@@ -165,6 +165,12 @@ class AKASHI_CORE_EXPORT ServerContext : public QObject
     akashi::ClientSession *clientById(int id) const;
 
     /**
+     * @brief The registry of connected clients, for turning typed input into a
+     * client with PlayerDirectory::find.
+     */
+    const akashi::PlayerDirectory &playerDirectory() const;
+
+    /**
      * @brief Returns the overall player count in the server.
      *
      * @return The overall player count in the server.

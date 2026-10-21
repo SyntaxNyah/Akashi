@@ -1,6 +1,7 @@
 #pragma once
 
 #include "akashi_core_export.h"
+#include "core/player_directory.h"
 
 #include <QHostAddress>
 #include <QList>
@@ -112,7 +113,16 @@ class AKASHI_CORE_EXPORT CommandContext
     void replyToServer(const QString &f_message);
     void sendPacket(const QString &f_header, const QStringList &f_fields);
 
-    std::optional<TargetPlayer> resolveTarget(int f_argument_index = 0);
+    // The person running the command.
+    akashi::ClientSession *self() const;
+
+    // The connected client the argument names, found through
+    // PlayerDirectory::find. When it names nobody suitable this replies
+    // with the reason and answers nullptr, so a caller only returns.
+    akashi::ClientSession *findClient(int f_argument_index = 0, const PlayerFilter &f_filter = {});
+
+    // The same lookup for plugin code, wrapped as a TargetPlayer.
+    std::optional<TargetPlayer> resolveTarget(int f_argument_index = 0, const PlayerFilter &f_filter = {});
 
     static int genRand(int f_min, int f_max);
 

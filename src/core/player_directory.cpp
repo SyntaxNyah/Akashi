@@ -1,5 +1,6 @@
 #include "core/player_directory.h"
 
+#include "akashi/helpers/parse.h"
 #include "client_session.h"
 
 #include <algorithm>
@@ -102,6 +103,26 @@ QString PlayerDirectory::ipKey(const QHostAddress &f_ip)
 akashi::ClientSession *PlayerDirectory::clientById(int f_id) const
 {
     return m_clients_by_id.value(f_id);
+}
+
+helpers::Result<akashi::ClientSession *> PlayerDirectory::find(const QString &f_text, const PlayerFilter &f_filter) const
+{
+    using Found = helpers::Result<akashi::ClientSession *>;
+    const helpers::Result<int> l_id = helpers::parseInt(f_text, QStringLiteral("client ID"));
+    if (!l_id) {
+        return Found::failure(l_id.error());
+    }
+    akashi::ClientSession *l_client = clientById(*l_id);
+    if (!l_client) {
+        return Found::failure(QStringLiteral("No client with ID %1 is connected.").arg(*l_id));
+    }
+    if (f_filter.exclude_id >= 0 && *l_id == f_filter.exclude_id) {
+        return Found::failure(QStringLiteral("You cannot target yourself with this command."));
+    }
+    if (f_filter.in_area >= 0 && l_client->areaId() != f_filter.in_area) {
+        return Found::failure(QStringLiteral("Client %1 is not in this area.").arg(*l_id));
+    }
+    return Found::success(l_client);
 }
 
 QVector<akashi::ClientSession *> PlayerDirectory::clients() const

@@ -17,7 +17,7 @@ namespace akashi::commands {
 // Command handlers dispatch area events through the invoking client.
 static void runCasingAfterRule(CommandContext &f_context, const QString &f_event, const QVariantMap &f_payload)
 {
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (l_client) {
         l_client->runAfterRule(f_event, f_payload);
     }
@@ -26,7 +26,7 @@ static void runCasingAfterRule(CommandContext &f_context, const QString &f_event
 // A blocking before-rule returns its reason; a missing client never blocks.
 static std::optional<QString> checkCasingBeforeRule(CommandContext &f_context, const QString &f_event, const QVariantMap &f_payload)
 {
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (l_client) {
         return l_client->checkBeforeRule(f_event, f_payload);
     }
@@ -39,7 +39,7 @@ void cmdDoc(CommandContext &f_context)
         f_context.reply("Document: " + f_context.server()->areaById(f_context.areaId())->document());
         return;
     }
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -50,7 +50,7 @@ void cmdDoc(CommandContext &f_context)
 
 void cmdClearDoc(CommandContext &f_context)
 {
-    akashi::ClientSession *l_client = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_client = f_context.self();
     if (!l_client) {
         return;
     }
@@ -95,7 +95,7 @@ void cmdEvidenceMod(CommandContext &f_context)
     l_area->setEvidenceAccess(l_access);
     f_context.reply("Changed evidence mod.");
 
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     l_self->sendEvidenceList(l_area);
     runCasingAfterRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload);
 }
@@ -129,7 +129,7 @@ void cmdEvidenceSwap(CommandContext &f_context)
             return;
         }
         l_area->swapEvidence(l_ev_id1, l_ev_id2);
-        akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+        akashi::ClientSession *l_self = f_context.self();
         l_self->sendEvidenceList(l_area);
         f_context.reply("The evidence " + QString::number(l_ev_id1) + " and " + QString::number(l_ev_id2) + " have been swapped.");
         runCasingAfterRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload);

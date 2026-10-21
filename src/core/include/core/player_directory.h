@@ -1,5 +1,6 @@
 #pragma once
 
+#include "akashi/helpers/result.h"
 #include "akashi/service.h"
 #include "akashi_core_export.h"
 
@@ -11,6 +12,13 @@
 namespace akashi {
 
 class ClientSession;
+
+// Who a find may answer with. The defaults accept any connected client.
+struct PlayerFilter
+{
+    int exclude_id = -1; // refuse this client - usually the person asking
+    int in_area = -1;    // refuse anyone not standing in this area
+};
 
 // The one place that knows who is connected under which ID. It owns the ID
 // pool and the client list together, so they can never disagree - the old
@@ -65,6 +73,12 @@ class AKASHI_CORE_EXPORT PlayerDirectory : public IService
 
     // The client with the given ID, or nullptr when that ID is free.
     akashi::ClientSession *clientById(int f_id) const;
+
+    // The one way to turn typed input into a connected client: the text
+    // must be a client ID, the ID must be connected, and the client must
+    // pass the filter. A refusal carries a reason to show the person who
+    // typed it, worded the same for every command and plugin.
+    helpers::Result<akashi::ClientSession *> find(const QString &f_text, const PlayerFilter &f_filter = {}) const;
 
     // Every connected client, oldest connection first.
     QVector<akashi::ClientSession *> clients() const;

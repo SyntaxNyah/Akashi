@@ -23,7 +23,7 @@ static QString reprimand(ServerContext *f_server, bool f_positive = false)
 void cmdPlay(CommandContext &f_context)
 {
     QString l_song = f_context.arguments().join(" ");
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     if (l_self->isDjBlocked()) {
         f_context.reply("You are blocked from changing the music.");
         return;
@@ -44,7 +44,7 @@ void cmdPlay(CommandContext &f_context)
 
 void cmdPlayAmbience(CommandContext &f_context)
 {
-    akashi::ClientSession *l_self = f_context.server()->clientById(f_context.clientId());
+    akashi::ClientSession *l_self = f_context.self();
     if (l_self->isDjBlocked()) {
         f_context.reply("You are blocked from changing the ambience.");
         return;

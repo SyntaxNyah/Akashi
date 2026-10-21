@@ -1,5 +1,6 @@
 #include "akashi/scheduler.h"
 
+#include "akashi/helpers/parse.h"
 #include "akashi/logging_categories.h"
 #include "akashi/thread_assert.h"
 
@@ -83,42 +84,15 @@ std::optional<QDateTime> parseWhen(const QString &f_text, const QDateTime &f_now
         return std::nullopt;
     }
 
-    // A compound duration: any run of count-unit tokens, added together.
+    // A compound duration, read by the same helper every command uses.
     static const QRegularExpression DURATION_SHAPE(QStringLiteral("^(?:\\d+[ywdhms])+$"),
                                                    QRegularExpression::CaseInsensitiveOption);
     if (DURATION_SHAPE.match(l_text).hasMatch()) {
-        static const QRegularExpression DURATION_TOKEN(QStringLiteral("(\\d+)([ywdhms])"),
-                                                       QRegularExpression::CaseInsensitiveOption);
-        qint64 l_seconds = 0;
-        auto l_tokens = DURATION_TOKEN.globalMatch(l_text);
-        while (l_tokens.hasNext()) {
-            const auto l_token = l_tokens.next();
-            const qint64 l_count = l_token.captured(1).toLongLong();
-            switch (l_token.captured(2).at(0).toLower().unicode()) {
-            case 'y':
-                l_seconds += l_count * 365ll * 24 * 60 * 60;
-                break;
-            case 'w':
-                l_seconds += l_count * 7ll * 24 * 60 * 60;
-                break;
-            case 'd':
-                l_seconds += l_count * 24ll * 60 * 60;
-                break;
-            case 'h':
-                l_seconds += l_count * 60ll * 60;
-                break;
-            case 'm':
-                l_seconds += l_count * 60ll;
-                break;
-            case 's':
-                l_seconds += l_count;
-                break;
-            }
-        }
-        if (l_seconds <= 0) {
+        const helpers::Result<qint64> l_seconds = helpers::parseDuration(l_text);
+        if (!l_seconds) {
             return std::nullopt;
         }
-        return f_now.addSecs(l_seconds);
+        return f_now.addSecs(*l_seconds);
     }
 
     // A weekday name means the coming midnight of that day.
