@@ -1,5 +1,6 @@
 #include "core/command_params.h"
 
+#include "akashi/scheduler.h"
 #include "core/command_context.h"
 #include "core/command_spec.h"
 
@@ -104,6 +105,13 @@ Param Param::maxLength(int f_length) const
     return max(qint64(f_length));
 }
 
+Param Param::without(const QStringList &f_roles) const
+{
+    Param l_copy = *this;
+    l_copy.m_excluded = f_roles;
+    return l_copy;
+}
+
 Param Param::diceLimits(Limit f_max_count, Limit f_max_sides) const
 {
     Param l_copy = *this;
@@ -126,7 +134,7 @@ QString Param::placeholder() const
     else {
         l_inner = m_name;
     }
-    if (m_kind == Kind::Text) {
+    if (takesRestOfLine()) {
         l_inner += QStringLiteral("...");
     }
     return m_optional ? "[" + l_inner + "]" : "<" + l_inner + ">";
@@ -140,11 +148,14 @@ Param word(const QString &f_name, const QStringList &f_words) { return FormReade
 Param duration(const QString &f_name) { return Param(Param::Kind::Duration, f_name); }
 Param dice(const QString &f_name) { return Param(Param::Kind::Dice, f_name); }
 Param text(const QString &f_name) { return Param(Param::Kind::Text, f_name); }
+Param token(const QString &f_name) { return Param(Param::Kind::Token, f_name); }
+Param role(const QString &f_name) { return Param(Param::Kind::Role, f_name); }
+Param when(const QString &f_name) { return Param(Param::Kind::When, f_name); }
 } // namespace param
 
 bool Args::has(const QString &f_name) const
 {
-    return m_clients.contains(f_name) || m_numbers.contains(f_name) || m_texts.contains(f_name) || m_dice.contains(f_name);
+    return m_clients.contains(f_name) || m_numbers.contains(f_name) || m_texts.contains(f_name) || m_dice.contains(f_name) || m_times.contains(f_name);
 }
 
 ClientSession *Args::client(const QString &f_name) const { return m_clients.value(f_name); }
@@ -155,6 +166,9 @@ QString Args::word(const QString &f_name) const { return m_texts.value(f_name); 
 qint64 Args::duration(const QString &f_name) const { return m_numbers.value(f_name); }
 helpers::Dice Args::dice(const QString &f_name) const { return m_dice.value(f_name); }
 QString Args::text(const QString &f_name) const { return m_texts.value(f_name); }
+QString Args::token(const QString &f_name) const { return m_texts.value(f_name); }
+QString Args::role(const QString &f_name) const { return m_texts.value(f_name); }
+QDateTime Args::when(const QString &f_name) const { return m_times.value(f_name); }
 
 std::optional<ParseError> FormReader::readOne(const Param &f_param, const QString &f_text, const ParamScope &f_scope, Args &f_args)
 {
@@ -220,6 +234,35 @@ std::optional<ParseError> FormReader::readOne(const Param &f_param, const QStrin
         f_args.m_dice.insert(f_param.m_name, *l_dice);
         return std::nullopt;
     }
+    case Param::Kind::Token:
+    {
+        if (f_param.m_max) {
+            const auto l_token = helpers::limitLength(f_text, int(f_param.m_max(f_scope)), f_param.m_name);
+            if (!l_token)
+                return l_token.error();
+        }
+        f_args.m_texts.insert(f_param.m_name, f_text);
+        return std::nullopt;
+    }
+    case Param::Kind::Role:
+    {
+        QStringList l_roles = f_scope.roleIds();
+        for (const QString &l_excluded : f_param.m_excluded)
+            l_roles.removeAll(l_excluded);
+        const auto l_role = helpers::parseWord(f_text, l_roles, QStringLiteral("role"));
+        if (!l_role)
+            return l_role.error();
+        f_args.m_texts.insert(f_param.m_name, *l_role);
+        return std::nullopt;
+    }
+    case Param::Kind::When:
+    {
+        const auto l_when = parseWhen(f_text, QDateTime::currentDateTime());
+        if (!l_when)
+            return ParseError(ParseError::NotATime, f_text, f_param.m_name);
+        f_args.m_times.insert(f_param.m_name, *l_when);
+        return std::nullopt;
+    }
     case Param::Kind::Text:
     {
         if (f_param.m_max) {
@@ -248,13 +291,14 @@ FormReading FormReader::read(const QList<Param> &f_params, const QStringList &f_
             l_reading.score = score(i, false);
             return l_reading;
         }
-        const QString l_text = l_param.m_kind == Param::Kind::Text ? helpers::joinFrom(f_arguments, l_next) : f_arguments.at(l_next);
+        const bool l_rest = l_param.takesRestOfLine();
+        const QString l_text = l_rest ? helpers::joinFrom(f_arguments, l_next) : f_arguments.at(l_next);
         if (const auto l_error = readOne(l_param, l_text, f_scope, l_args)) {
             l_reading.error = *l_error;
             l_reading.score = score(i, true);
             return l_reading;
         }
-        l_next = l_param.m_kind == Param::Kind::Text ? f_arguments.size() : l_next + 1;
+        l_next = l_rest ? f_arguments.size() : l_next + 1;
     }
     if (l_next < f_arguments.size()) {
         l_reading.error = ParseError(ParseError::ExtraValue, f_arguments.at(l_next), {});
@@ -290,7 +334,7 @@ bool validParams(const QList<Param> &f_params)
             return false;
         }
         l_names.insert(l_param.name());
-        if (l_param.kind() == Param::Kind::Text && i != f_params.size() - 1) {
+        if (l_param.takesRestOfLine() && i != f_params.size() - 1) {
             return false;
         }
         if (l_seen_optional && !l_param.isOptional()) {
@@ -320,8 +364,19 @@ FormChoice chooseForm(const CommandSpec &f_spec, const QStringList &f_arguments,
             l_choice.form = &l_variant;
             l_choice.args = l_reading.args;
         }
-        if (!l_choice.form && (!l_best || l_reading.score > l_best->score)) {
+        if (l_choice.form) {
+            continue;
+        }
+        if (!l_best || l_reading.score > l_best->score) {
             l_best = l_reading;
+        }
+        else if (l_reading.score == l_best->score && l_reading.error.error == helpers::ParseError::UnknownWord && l_best->error.error == helpers::ParseError::UnknownWord && l_reading.error.subject == l_best->error.subject) {
+            // Forms told apart by a word at the same point: the refusal
+            // lists every word that would have been accepted there.
+            for (const QString &l_word : l_reading.error.choices) {
+                if (!l_best->error.choices.contains(l_word))
+                    l_best->error.choices << l_word;
+            }
         }
     }
     if (l_choice.form) {

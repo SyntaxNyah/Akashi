@@ -4,6 +4,7 @@
 #include "akashi_core_export.h"
 #include "core/player_directory.h"
 
+#include <QDateTime>
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -35,6 +36,8 @@ class AKASHI_CORE_EXPORT ParamScope
     virtual bool ownsInvokerArea(ClientSession *f_client) const = 0;
     // A server setting a limit may depend on, by name ("max_dice").
     virtual int setting(const QString &f_name) const = 0;
+    // The role ids accounts may hold, in their canonical spelling.
+    virtual QStringList roleIds() const = 0;
 };
 
 // One declared parameter of a command form. Built with the param::
@@ -56,6 +59,9 @@ class AKASHI_CORE_EXPORT Param
         Duration,
         Dice,
         Text,
+        Token,
+        Role,
+        When,
     };
 
     // A limit that may depend on the server, read when the parameter is.
@@ -78,6 +84,8 @@ class AKASHI_CORE_EXPORT Param
     Param max(Limit f_max) const;
     // Text: the most characters accepted.
     Param maxLength(int f_length) const;
+    // Role: leave these roles out - another form, gated on more, takes them.
+    Param without(const QStringList &f_roles) const;
     // Dice: the most dice and sides, fixed or from the server.
     Param diceLimits(Limit f_max_count, Limit f_max_sides) const;
 
@@ -85,6 +93,8 @@ class AKASHI_CORE_EXPORT Param
     QString name() const { return m_name; }
     bool isOptional() const { return m_optional; }
     bool isSensitive() const { return m_sensitive; }
+    // Text and When read the rest of the line, so they come last.
+    bool takesRestOfLine() const { return m_kind == Kind::Text || m_kind == Kind::When; }
     QString immunePermission() const { return m_immune_permission; }
     bool isImmuneIfAreaOwner() const { return m_immune_area_owner; }
     // How the parameter reads in a usage line: <target>, [reason...], all.
@@ -107,6 +117,7 @@ class AKASHI_CORE_EXPORT Param
     QStringList m_words;
     Limit m_max_count;
     Limit m_max_sides;
+    QStringList m_excluded;
 };
 
 namespace param {
@@ -118,6 +129,14 @@ AKASHI_CORE_EXPORT Param duration(const QString &f_name);
 AKASHI_CORE_EXPORT Param dice(const QString &f_name);
 // The rest of the line, joined by spaces. Must be the form's last parameter.
 AKASHI_CORE_EXPORT Param text(const QString &f_name);
+// One argument as typed - a username, a password. maxLength() bounds it.
+AKASHI_CORE_EXPORT Param token(const QString &f_name);
+// One of the server's role ids, compared without case and answered in its
+// canonical spelling, so "super" reads as SUPER.
+AKASHI_CORE_EXPORT Param role(const QString &f_name);
+// A future moment, read from the rest of the line: a duration ("1d12h"),
+// a weekday, or a date like "01.01.2028 18:00". Must be the last parameter.
+AKASHI_CORE_EXPORT Param when(const QString &f_name);
 } // namespace param
 
 // The checked values of the form that ran, by parameter name. A getter
@@ -136,6 +155,9 @@ class AKASHI_CORE_EXPORT Args
     qint64 duration(const QString &f_name) const;
     helpers::Dice dice(const QString &f_name) const;
     QString text(const QString &f_name) const;
+    QString token(const QString &f_name) const;
+    QString role(const QString &f_name) const;
+    QDateTime when(const QString &f_name) const;
 
   private:
     friend class FormReader;
@@ -144,6 +166,7 @@ class AKASHI_CORE_EXPORT Args
     QHash<QString, qint64> m_numbers;
     QHash<QString, QString> m_texts;
     QHash<QString, helpers::Dice> m_dice;
+    QHash<QString, QDateTime> m_times;
 };
 
 // Reads one form's parameters against the typed arguments.

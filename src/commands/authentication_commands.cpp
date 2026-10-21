@@ -69,7 +69,7 @@ static bool checkPasswordRequirements(ServerSettings *f_settings, const QString 
     return passwordMeetsRequirements(f_settings, f_username, decodeMessage(f_password));
 }
 
-void cmdLogin(CommandContext &f_context)
+void cmdLogin(CommandContext &f_context, const Args &)
 {
     if (f_context.isAuthenticated()) {
         f_context.reply("You are already logged in!");
@@ -97,27 +97,30 @@ void cmdLogin(CommandContext &f_context)
     f_context.reply("This server uses " + l_system_id + " authentication.");
 }
 
-void cmdAddUser(CommandContext &f_context)
+void cmdAddUser(CommandContext &f_context, const Args &f_args)
 {
-    if (!checkPasswordRequirements(f_context.server()->serverSettings(), f_context.argument(0), f_context.argument(1))) {
+    const QString l_username = f_args.token(QStringLiteral("username"));
+    const QString l_password = f_args.token(QStringLiteral("password"));
+    if (!checkPasswordRequirements(f_context.server()->serverSettings(), l_username, l_password)) {
         f_context.reply("Password does not meet server requirements.");
         return;
     }
 
     QByteArray l_salt = CryptoHelper::randbytes(16);
 
-    if (f_context.server()->databaseManager()->createUser(f_context.argument(0), l_salt, f_context.argument(1), ACLRolesHandler::NONE_ID))
-        f_context.reply("Created user " + f_context.argument(0) + ".\nUse /setperms to modify their permissions.");
+    if (f_context.server()->databaseManager()->createUser(l_username, l_salt, l_password, ACLRolesHandler::NONE_ID))
+        f_context.reply("Created user " + l_username + ".\nUse /setperms to modify their permissions.");
     else
-        f_context.reply("Unable to create user " + f_context.argument(0) + ".\nDoes a user with that name already exist?");
+        f_context.reply("Unable to create user " + l_username + ".\nDoes a user with that name already exist?");
 }
 
-void cmdRemoveUser(CommandContext &f_context)
+void cmdRemoveUser(CommandContext &f_context, const Args &f_args)
 {
-    if (f_context.server()->databaseManager()->deleteUser(f_context.argument(0)))
-        f_context.reply("Successfully removed user " + f_context.argument(0) + ".");
+    const QString l_username = f_args.token(QStringLiteral("username"));
+    if (f_context.server()->databaseManager()->deleteUser(l_username))
+        f_context.reply("Successfully removed user " + l_username + ".");
     else
-        f_context.reply("Unable to remove user " + f_context.argument(0) + ".\nDoes it exist?");
+        f_context.reply("Unable to remove user " + l_username + ".\nDoes it exist?");
 }
 
 static void replyRolePermissions(CommandContext &f_context, const QString &f_header, const ACLRole &f_role)
@@ -140,15 +143,15 @@ static void replyRolePermissions(CommandContext &f_context, const QString &f_hea
     f_context.reply(l_message.join("\n"));
 }
 
-void cmdListPermsSelf(CommandContext &f_context)
+void cmdListPermsSelf(CommandContext &f_context, const Args &)
 {
     const ACLRole l_role = f_context.server()->aclRolesHandler()->roleById(f_context.aclRoleId());
     replyRolePermissions(f_context, "You have been given the following permissions:", l_role);
 }
 
-void cmdListPermsUser(CommandContext &f_context)
+void cmdListPermsUser(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_username = f_context.argument(0);
+    const QString l_username = f_args.token(QStringLiteral("username"));
     const QString l_acl_id = f_context.server()->databaseManager()->acl(l_username);
     if (l_acl_id.isEmpty()) {
         f_context.reply(l_username + " wasn't found!");
@@ -159,24 +162,13 @@ void cmdListPermsUser(CommandContext &f_context)
     replyRolePermissions(f_context, "User " + l_username + " has the following permissions:", l_role);
 }
 
-void cmdSetPerms(CommandContext &f_context)
+// The role arrives checked and in its canonical spelling: the role
+// parameter reads "super" as SUPER, and only the form gated on super
+// accepts SUPER at all.
+void cmdSetPerms(CommandContext &f_context, const Args &f_args)
 {
-    // Role ids are upper-case, and the roles handler upper-cases every
-    // lookup - so "super" is the SUPER role. Compare and store that same
-    // canonical spelling, or "super" would slip past the SUPER check below.
-    const QString l_target_acl = f_context.argument(1).toUpper();
-    if (!f_context.server()->aclRolesHandler()->roleExists(l_target_acl)) {
-        f_context.reply("That role doesn't exist!");
-        return;
-    }
-
-    // Handing out SUPER is the spec-declared escalation.
-    if (l_target_acl == ACLRolesHandler::SUPER_ID && !f_context.canPerform(f_context.escalatesTo())) {
-        f_context.reply("You aren't allowed to set that role!");
-        return;
-    }
-
-    const QString l_target_username = f_context.argument(0);
+    const QString l_target_acl = f_args.role(QStringLiteral("role"));
+    const QString l_target_username = f_args.token(QStringLiteral("username"));
     if (l_target_username == "root") {
         f_context.reply("You can't change root's role!");
         return;
@@ -188,9 +180,9 @@ void cmdSetPerms(CommandContext &f_context)
         f_context.reply(l_target_username + " wasn't found!");
 }
 
-void cmdRemovePerms(CommandContext &f_context)
+void cmdRemovePerms(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_username = f_context.argument(0);
+    const QString l_username = f_args.token(QStringLiteral("username"));
     if (l_username == "root") {
         f_context.reply("You can't change root's role!");
         return;
@@ -202,13 +194,13 @@ void cmdRemovePerms(CommandContext &f_context)
         f_context.reply(l_username + " wasn't found!");
 }
 
-void cmdListUsers(CommandContext &f_context)
+void cmdListUsers(CommandContext &f_context, const Args &)
 {
     QStringList l_users = f_context.server()->databaseManager()->users();
     f_context.reply("All users:\n" + l_users.join("\n"));
 }
 
-void cmdLogout(CommandContext &f_context)
+void cmdLogout(CommandContext &f_context, const Args &)
 {
     if (!f_context.isAuthenticated()) {
         f_context.reply("You are not logged in!");
@@ -235,76 +227,73 @@ static void changePassword(CommandContext &f_context, const QString &f_username,
         f_context.reply("There was an error changing the password.");
 }
 
-void cmdChangePassSelf(CommandContext &f_context)
+void cmdChangePassSelf(CommandContext &f_context, const Args &f_args)
 {
     if (f_context.moderatorName().isEmpty()) {
         f_context.reply("You do not have permission to use that command. You must be logged in.");
         return;
     }
-    changePassword(f_context, f_context.moderatorName(), f_context.argument(0));
+    changePassword(f_context, f_context.moderatorName(), f_args.token(QStringLiteral("password")));
 }
 
-void cmdChangePassUser(CommandContext &f_context)
+void cmdChangePassUser(CommandContext &f_context, const Args &f_args)
 {
-    changePassword(f_context, f_context.argument(1), f_context.argument(0));
+    changePassword(f_context, f_args.token(QStringLiteral("username")), f_args.token(QStringLiteral("password")));
 }
 
 void registerAuthenticationCommands(CommandRegistry &f_registry)
 {
-    f_registry.registerCommand(
-        {QStringLiteral("login"), {}, {akashi::permission::user}, 0, QStringLiteral("/login"), QStringLiteral("Begins the login process.")},
-        cmdLogin, QStringLiteral("core"));
+    const Param l_username = param::token(QStringLiteral("username"));
+    const Param l_password = param::token(QStringLiteral("password")).sensitive();
 
-    f_registry.registerCommand(
-        {QStringLiteral("adduser"), {}, {akashi::permission::modify_users}, 2, QStringLiteral("/adduser <username> <password>"), QStringLiteral("Creates a new user with the given credentials."), 1},
-        cmdAddUser, QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("login"), {akashi::permission::user}, {}, QStringLiteral("Begins the login process."), cmdLogin), QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("logout"), {akashi::permission::user}, {}, QStringLiteral("Logs you out."), cmdLogout), QStringLiteral("core"));
+    f_registry.registerCommand(singleForm(QStringLiteral("listusers"), {akashi::permission::modify_users}, {}, QStringLiteral("Lists all users in the database."), cmdListUsers), QStringLiteral("core"));
 
-    f_registry.registerCommand(
-        {QStringLiteral("removeuser"), {}, {akashi::permission::modify_users}, 1, QStringLiteral("/removeuser <username>"), QStringLiteral("Removes the user with the given name.")},
-        cmdRemoveUser, QStringLiteral("core"));
+    CommandSpec l_adduser;
+    l_adduser.name = QStringLiteral("adduser");
+    l_adduser.description = QStringLiteral("Creates a new user with the given credentials.");
+    l_adduser.variants = {{.id = QStringLiteral("add"), .gate = {akashi::permission::modify_users}, .params = {l_username, l_password}, .run = cmdAddUser}};
+    f_registry.registerCommand(l_adduser, QStringLiteral("core"));
+
+    CommandSpec l_removeuser;
+    l_removeuser.name = QStringLiteral("removeuser");
+    l_removeuser.description = QStringLiteral("Removes the user with the given name.");
+    l_removeuser.variants = {{.id = QStringLiteral("remove"), .gate = {akashi::permission::modify_users}, .params = {l_username}, .run = cmdRemoveUser}};
+    f_registry.registerCommand(l_removeuser, QStringLiteral("core"));
 
     CommandSpec l_listperms;
     l_listperms.name = QStringLiteral("listperms");
-    l_listperms.usage = QStringLiteral("/listperms [username]");
     l_listperms.description = QStringLiteral("Lists your permissions, or the permissions of the given user.");
     l_listperms.variants = {
-        {QStringLiteral("own"), 0, 0, {akashi::permission::user}, QStringLiteral("/listperms"), QStringLiteral("Lists your permissions."), cmdListPermsSelf},
-        {QStringLiteral("user"), 1, -1, {akashi::permission::modify_users}, QStringLiteral("/listperms <username>"), QStringLiteral("Lists the given user's permissions."), cmdListPermsUser},
+        {.id = QStringLiteral("own"), .gate = {akashi::permission::user}, .description = QStringLiteral("Lists your permissions."), .run = cmdListPermsSelf},
+        {.id = QStringLiteral("user"), .gate = {akashi::permission::modify_users}, .description = QStringLiteral("Lists the given user's permissions."), .params = {l_username}, .run = cmdListPermsUser},
     };
     f_registry.registerCommand(l_listperms, QStringLiteral("core"));
 
-    {
-        CommandSpec l_setperms;
-        l_setperms.name = QStringLiteral("setperms");
-        l_setperms.gate = {akashi::permission::modify_users};
-        l_setperms.min_args = 2;
-        l_setperms.usage = QStringLiteral("/setperms <username> <role>");
-        l_setperms.description = QStringLiteral("Sets the role of the given user.");
-        l_setperms.escalates_to = akashi::permission::super;
-        l_setperms.escalates_when = QStringLiteral("assigning the SUPER role");
-        f_registry.registerCommand(l_setperms, cmdSetPerms, QStringLiteral("core"));
-    }
+    // Handing out SUPER is its own form, gated on super. The general form
+    // leaves SUPER out of its roles, so no spelling of it gets past.
+    CommandSpec l_setperms;
+    l_setperms.name = QStringLiteral("setperms");
+    l_setperms.description = QStringLiteral("Sets the role of the given user.");
+    l_setperms.variants = {
+        {.id = QStringLiteral("super"), .gate = {akashi::permission::super}, .description = QStringLiteral("Assigns the SUPER role."), .params = {l_username, param::word(QStringLiteral("role"), {ACLRolesHandler::SUPER_ID})}, .run = cmdSetPerms},
+        {.id = QStringLiteral("role"), .gate = {akashi::permission::modify_users}, .description = QStringLiteral("Assigns any other role."), .params = {l_username, param::role(QStringLiteral("role")).without({ACLRolesHandler::SUPER_ID})}, .run = cmdSetPerms},
+    };
+    f_registry.registerCommand(l_setperms, QStringLiteral("core"));
 
-    f_registry.registerCommand(
-        {QStringLiteral("removeperms"), {}, {akashi::permission::modify_users}, 1, QStringLiteral("/removeperms <username>"), QStringLiteral("Removes all permissions from the given user.")},
-        cmdRemovePerms, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("listusers"), {}, {akashi::permission::modify_users}, 0, QStringLiteral("/listusers"), QStringLiteral("Lists all users in the database.")},
-        cmdListUsers, QStringLiteral("core"));
-
-    f_registry.registerCommand(
-        {QStringLiteral("logout"), {}, {akashi::permission::user}, 0, QStringLiteral("/logout"), QStringLiteral("Logs you out.")},
-        cmdLogout, QStringLiteral("core"));
+    CommandSpec l_removeperms;
+    l_removeperms.name = QStringLiteral("removeperms");
+    l_removeperms.description = QStringLiteral("Removes all permissions from the given user.");
+    l_removeperms.variants = {{.id = QStringLiteral("remove"), .gate = {akashi::permission::modify_users}, .params = {l_username}, .run = cmdRemovePerms}};
+    f_registry.registerCommand(l_removeperms, QStringLiteral("core"));
 
     CommandSpec l_changepass;
     l_changepass.name = QStringLiteral("changepass");
-    l_changepass.usage = QStringLiteral("/changepass <password> [username]");
     l_changepass.description = QStringLiteral("Changes your password, or another user's password if you have super permissions.");
-    l_changepass.sensitive_args_from = 0;
     l_changepass.variants = {
-        {QStringLiteral("own"), 1, 1, {akashi::permission::user}, QStringLiteral("/changepass <password>"), QStringLiteral("Changes your password."), cmdChangePassSelf},
-        {QStringLiteral("user"), 2, 2, {akashi::permission::super}, QStringLiteral("/changepass <password> <username>"), QStringLiteral("Changes another user's password."), cmdChangePassUser},
+        {.id = QStringLiteral("own"), .gate = {akashi::permission::user}, .description = QStringLiteral("Changes your password."), .params = {l_password}, .run = cmdChangePassSelf},
+        {.id = QStringLiteral("user"), .gate = {akashi::permission::super}, .description = QStringLiteral("Changes another user's password."), .params = {l_password, l_username}, .run = cmdChangePassUser},
     };
     f_registry.registerCommand(l_changepass, QStringLiteral("core"));
 }

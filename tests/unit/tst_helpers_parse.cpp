@@ -406,6 +406,7 @@ void tst_HelpersParse::errorString_data()
     QTest::newRow("NotInArea") << l_make(ParseError::NotInArea, "1", "client_id") << "Client 1 is not in this area.";
     QTest::newRow("MissingValue") << l_make(ParseError::MissingValue, "", "target") << "The target is missing.";
     QTest::newRow("ExtraValue") << l_make(ParseError::ExtraValue, "99", "") << "\"99\" was not expected here.";
+    QTest::newRow("NotATime") << l_make(ParseError::NotATime, "someday", "until") << "Could not read \"someday\" as a time. Use a duration like 1d12h30m, a weekday, or a date like 01.01.2028 18:00.";
     QTest::newRow("Immune") << l_make(ParseError::Immune, "3", "client_id") << "Client 3 cannot be targeted by this command.";
 }
 

@@ -53,6 +53,7 @@ class FakeScope : public akashi::ParamScope
     }
     bool ownsInvokerArea(akashi::ClientSession *f_client) const override { return area_owners.contains(f_client->clientId()); }
     int setting(const QString &f_name) const override { return f_name == QLatin1String("max_dice") ? 10 : 100; }
+    QStringList roleIds() const override { return {QStringLiteral("MODERATOR"), QStringLiteral("NONE"), QStringLiteral("SUPER")}; }
 
     akashi::ClientSession *client(int f_id) const { return m_clients.at(f_id); }
 
@@ -77,6 +78,9 @@ class tst_CommandParams : public QObject
     void clientFilters();
     void chooseForm_data();
     void chooseForm();
+    void setpermsKeepsSuperBehindItsOwnForm_data();
+    void setpermsKeepsSuperBehindItsOwnForm();
+    void tiedWordRefusalsListEveryChoice();
     void usageIsGenerated();
     void registryRefusesBadlyMadeForms();
     void sensitiveParametersAreRedacted();
@@ -119,6 +123,10 @@ static QList<Param> formNamed(const QString &f_name)
         return {param::integer(QStringLiteral("sides"), 1, 100).optional(), param::integer(QStringLiteral("dice"), 1, 10).optional()};
     if (f_name == QLatin1String("message"))
         return {param::client(QStringLiteral("target")), param::text(QStringLiteral("message")).maxLength(10)};
+    if (f_name == QLatin1String("sanction"))
+        return {param::client(QStringLiteral("target")), param::when(QStringLiteral("until")).optional()};
+    if (f_name == QLatin1String("account"))
+        return {param::token(QStringLiteral("username")), param::token(QStringLiteral("password")).maxLength(8)};
     if (f_name == QLatin1String("server_limit"))
         return {param::integer(QStringLiteral("dice"), 1, 0).max([](const akashi::ParamScope &f_scope) { return qint64(f_scope.setting(QStringLiteral("max_dice"))); })};
     return {};
@@ -144,6 +152,15 @@ void tst_CommandParams::readForm_data()
     QTest::newRow("text within its length") << "message" << QStringList{"1", "hi", "there"} << ParseError::NoError << 4;
     QTest::newRow("text over its length") << "message" << QStringList{"1", "hello", "there", "again"} << ParseError::TextTooLong << 3;
     QTest::newRow("text is required") << "message" << QStringList{"1"} << ParseError::MissingValue << 2;
+    QTest::newRow("no time given") << "sanction" << QStringList{"1"} << ParseError::NoError << 4;
+    QTest::newRow("a duration") << "sanction" << QStringList{"1", "1d12h"} << ParseError::NoError << 4;
+    QTest::newRow("a weekday") << "sanction" << QStringList{"1", "friday"} << ParseError::NoError << 4;
+    QTest::newRow("a date and time, two words") << "sanction" << QStringList{"1", "01.01.2099", "18:00"} << ParseError::NoError << 4;
+    QTest::newRow("not a time") << "sanction" << QStringList{"1", "someday"} << ParseError::NotATime << 3;
+    QTest::newRow("a date already past") << "sanction" << QStringList{"1", "01.01.2000"} << ParseError::NotATime << 3;
+    QTest::newRow("two tokens") << "account" << QStringList{"bob", "Secret1!"} << ParseError::NoError << 4;
+    QTest::newRow("a token over its length") << "account" << QStringList{"bob", "Secret12!"} << ParseError::TextTooLong << 3;
+    QTest::newRow("a token is one word") << "account" << QStringList{"bob", "Secret1!", "more"} << ParseError::ExtraValue << 4;
     QTest::newRow("a limit from the server") << "server_limit" << QStringList{"10"} << ParseError::NoError << 2;
     QTest::newRow("over a limit from the server") << "server_limit" << QStringList{"11"} << ParseError::OutOfRange << 1;
 }
@@ -279,6 +296,86 @@ void tst_CommandParams::chooseForm()
     if (!form.isEmpty() || denied)
         return;
     QCOMPARE(l_choice.error.error, error);
+}
+
+// /setperms as core declares it: SUPER only through the form gated on
+// super; every other role through the general form, which leaves SUPER out.
+static CommandSpec setpermsSpec()
+{
+    const auto l_run = [](akashi::CommandContext &, const Args &) {};
+    CommandSpec l_spec;
+    l_spec.name = QStringLiteral("setperms");
+    l_spec.variants = {
+        {.id = QStringLiteral("super"), .gate = {QStringLiteral("super")}, .params = {param::token(QStringLiteral("username")), param::word(QStringLiteral("role"), {QStringLiteral("SUPER")})}, .run = l_run},
+        {.id = QStringLiteral("role"), .gate = {QStringLiteral("modify_users")}, .params = {param::token(QStringLiteral("username")), param::role(QStringLiteral("role")).without({QStringLiteral("SUPER")})}, .run = l_run},
+    };
+    return l_spec;
+}
+
+void tst_CommandParams::setpermsKeepsSuperBehindItsOwnForm_data()
+{
+    QTest::addColumn<QString>("role");
+    QTest::addColumn<QStringList>("permissions");
+    QTest::addColumn<QString>("form");
+    QTest::addColumn<QString>("stored");
+    QTest::addColumn<bool>("denied");
+
+    const QStringList l_supervisor{QStringLiteral("modify_users")};
+    const QStringList l_super{QStringLiteral("super"), QStringLiteral("modify_users")};
+
+    QTest::newRow("an ordinary role") << "moderator" << l_supervisor << "role" << "MODERATOR" << false;
+    QTest::newRow("SUPER without super") << "SUPER" << l_supervisor << "" << "" << true;
+    QTest::newRow("super without super") << "super" << l_supervisor << "" << "" << true;
+    QTest::newRow("Super without super") << "Super" << l_supervisor << "" << "" << true;
+    QTest::newRow("super with super") << "super" << l_super << "super" << "SUPER" << false;
+    QTest::newRow("an ordinary role with super") << "none" << l_super << "role" << "NONE" << false;
+    QTest::newRow("an unknown role") << "admin" << l_supervisor << "" << "" << false;
+}
+
+void tst_CommandParams::setpermsKeepsSuperBehindItsOwnForm()
+{
+    QFETCH(QString, role);
+    QFETCH(QStringList, permissions);
+    QFETCH(QString, form);
+    QFETCH(QString, stored);
+    QFETCH(bool, denied);
+
+    FakeScope l_scope;
+    const CommandSpec l_spec = setpermsSpec();
+    const auto l_can = [&permissions](const QString &f_permission) { return permissions.contains(f_permission); };
+    const akashi::FormChoice l_choice = akashi::chooseForm(l_spec, {QStringLiteral("bob"), role}, l_scope, l_can);
+
+    QCOMPARE(l_choice.form ? l_choice.form->id : QString(), form);
+    QCOMPARE(l_choice.denied, denied);
+    if (l_choice.form)
+        QCOMPARE(l_choice.args->role(QStringLiteral("role")), stored);
+    if (form.isEmpty() && !denied) {
+        // An unknown role lists the ones that may be given - never SUPER.
+        QCOMPARE(l_choice.error.error, ParseError::UnknownWord);
+        QVERIFY(!l_choice.error.choices.contains(QStringLiteral("SUPER")));
+    }
+}
+
+void tst_CommandParams::tiedWordRefusalsListEveryChoice()
+{
+    // /update_ban's forms differ by the field word; a wrong field is refused
+    // with every field any form would have taken.
+    const auto l_run = [](akashi::CommandContext &, const Args &) {};
+    const Param l_id = param::integer(QStringLiteral("ban_id"), 0, 100);
+    CommandSpec l_spec;
+    l_spec.name = QStringLiteral("update_ban");
+    l_spec.variants = {
+        {.id = QStringLiteral("duration"), .params = {l_id, param::word(QStringLiteral("field"), {QStringLiteral("duration")}), param::duration(QStringLiteral("duration"))}, .run = l_run},
+        {.id = QStringLiteral("reason"), .params = {l_id, param::word(QStringLiteral("field"), {QStringLiteral("reason")}), param::text(QStringLiteral("reason"))}, .run = l_run},
+    };
+    FakeScope l_scope;
+    const auto l_open = [](const QString &) { return true; };
+
+    const akashi::FormChoice l_choice = akashi::chooseForm(l_spec, {QStringLiteral("3"), QStringLiteral("colour"), QStringLiteral("red")}, l_scope, l_open);
+    QVERIFY(!l_choice.form);
+    QCOMPARE(l_choice.error.error, ParseError::UnknownWord);
+    QCOMPARE(l_choice.error.choices, (QStringList{QStringLiteral("duration"), QStringLiteral("reason")}));
+    QCOMPARE(l_choice.error.errorString(), QStringLiteral("\"colour\" is not a valid field. Use one of: duration, reason."));
 }
 
 void tst_CommandParams::usageIsGenerated()

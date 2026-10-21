@@ -1686,7 +1686,7 @@ void ProtocolTest::setpermsCannotGrantSuperInAnyCase()
     // Every spelling of SUPER is refused, not just the upper-case one.
     for (const QString &spelling : {QStringLiteral("SUPER"), QStringLiteral("super"), QStringLiteral("Super")}) {
         const QString reply = oocReply(boss, QStringLiteral("/setperms target ") + spelling);
-        QVERIFY2(reply.contains(QStringLiteral("You aren't allowed to set that role!")),
+        QVERIFY2(reply.contains(QStringLiteral("You do not have permission to use that command.")),
                  qPrintable(spelling + " was not refused: " + reply));
         QVERIFY2(!reply.contains(QStringLiteral("Successfully applied")), qPrintable(spelling + ": " + reply));
     }

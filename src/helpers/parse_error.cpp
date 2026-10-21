@@ -40,6 +40,8 @@ QString ParseError::errorString() const
         return tr("\"%1\" was not expected here.").arg(input);
     case Immune:
         return tr("Client %1 cannot be targeted by this command.").arg(input);
+    case NotATime:
+        return tr("Could not read \"%1\" as a time. Use a duration like 1d12h30m, a weekday, or a date like 01.01.2028 18:00.").arg(input);
     }
     return {};
 }

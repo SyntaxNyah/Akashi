@@ -37,6 +37,7 @@ struct AKASHI_CORE_EXPORT ParseError
         MissingValue,    // nothing given where the subject was needed
         ExtraValue,      // more given than anything reads
         Immune,          // a client the command may not act on
+        NotATime,        // not a duration, weekday or future date
     };
     Q_ENUM(Error)
 

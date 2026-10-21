@@ -4,6 +4,7 @@
 #include "akashi/permissions.h"
 #include "core/client_session.h"
 #include "core/command_registry.h"
+#include "core/permission_registry.h"
 #include "core/server_context.h"
 #include "core/server_settings.h"
 #include "world/area.h"
@@ -216,6 +217,8 @@ class SessionScope : public ParamScope
             return m_server->serverSettings()->max_value();
         return 0;
     }
+
+    QStringList roleIds() const override { return m_server->aclRolesHandler()->roleIds(); }
 
   private:
     akashi::ClientSession *m_invoker;

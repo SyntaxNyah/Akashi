@@ -197,6 +197,18 @@ struct CommandSpec
     }
 };
 
+// A command with one declared form - most commands have one shape.
+inline CommandSpec singleForm(const QString &f_name, const Gate &f_gate, const QList<Param> &f_params,
+                              const QString &f_description, ArgsHandler f_run, const QStringList &f_aliases = {})
+{
+    CommandSpec l_spec;
+    l_spec.name = f_name;
+    l_spec.aliases = f_aliases;
+    l_spec.description = f_description;
+    l_spec.variants = {{.id = QStringLiteral("run"), .gate = f_gate, .params = f_params, .run = std::move(f_run)}};
+    return l_spec;
+}
+
 // Which declared form runs for the typed arguments, or why none does.
 struct FormChoice
 {
