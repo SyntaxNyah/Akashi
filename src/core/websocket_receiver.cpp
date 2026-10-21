@@ -47,6 +47,16 @@ bool WebSocketReceiver::start()
     return m_server->listen(m_address, m_port);
 }
 
+void WebSocketReceiver::pauseAccepting()
+{
+    m_server->pauseAccepting();
+}
+
+void WebSocketReceiver::resumeAccepting()
+{
+    m_server->resumeAccepting();
+}
+
 QString WebSocketReceiver::lastError() const
 {
     return m_server->errorString();

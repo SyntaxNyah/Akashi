@@ -753,10 +753,16 @@ class AKASHI_CORE_EXPORT ServerContext : public QObject
     QList<akashi::ClientSession *> sessionsForIdentity(const QString &f_ipid, const QString &f_hwid) const;
 
     /**
-     * @brief Opens the receiver and assembles everything that needs a
-     * listening server: the publisher, the world, the ban lists.
+     * @brief Loads the content the server serves: characters, music, the
+     * world, the ban lists, the core grants and commands.
      */
-    ExitCode startListening();
+    ExitCode loadContent();
+
+    /**
+     * @brief Binds the receiver, paused until start() finishes, and starts
+     * the publisher. Skipped by --check-config.
+     */
+    ExitCode openSocket();
 
     // The roles an actor wears here: the one they logged into, plus the
     // case-manager keyring when they own the area they are standing in.

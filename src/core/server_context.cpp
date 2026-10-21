@@ -189,7 +189,13 @@ ExitCode ServerContext::start()
     buildCore();
     setStage(Stage::ServicesConstructed);
 
-    ExitCode code = startListening();
+    // The socket binds now, so a taken port fails before anything else
+    // happens, but accepts nobody until start() has finished.
+    ExitCode code = openSocket();
+    if (code != ExitCode::Ok) {
+        return code;
+    }
+    code = loadContent();
     if (code != ExitCode::Ok) {
         return code;
     }
@@ -247,15 +253,18 @@ ExitCode ServerContext::start()
     setStage(Stage::PluginsLoaded);
 
     // The one active authentication system resolves after the plugins
-    // started, so a plugin-provided system can be the configured one. The
-    // socket already listens, but start() runs in a single event loop
-    // turn: no connection is serviced before this resolves.
+    // started, so a plugin-provided system can be the configured one.
     if (!resolveActiveAuthenticator()) {
         return ExitCode::InvalidConfig;
     }
     bootstrapRootAccount();
     bootstrapModpass();
 
+    // Clients are let in last, once plugins, grants and the authenticator
+    // are in place, so none meets a half-built server.
+    if (m_receiver) {
+        m_receiver->resumeAccepting();
+    }
     setStage(Stage::Listening);
     setStage(Stage::Running);
     return ExitCode::Ok;
@@ -787,10 +796,10 @@ QString ServerContext::storedSanctionsUnreadable()
     return QStringLiteral("Your sanctions could not be checked. Try again later.");
 }
 
-ExitCode ServerContext::startListening()
+ExitCode ServerContext::openSocket()
 {
-    // The --check-config dry run wants every load and validation this
-    // assembly performs; only the socket and the advertiser are skipped.
+    // The --check-config dry run wants every load and validation start()
+    // performs; only the socket and the advertiser are skipped.
     if (QCoreApplication::arguments().contains(QStringLiteral("--check-config"))) {
         qCInfo(akashiServer) << "--check-config: skipping the socket and advertiser.";
     }
@@ -819,12 +828,18 @@ ExitCode ServerContext::startListening()
             qCCritical(akashiServer) << "Server error:" << m_receiver->lastError();
             return ExitCode::PortUnavailable;
         }
+        // Pausing needs the listening socket, so it follows start().
+        m_receiver->pauseAccepting();
         qCInfo(akashiServer) << "Server listening on" << m_receiver->port();
 
         // Construct modern advertiser if enabled in config
         server_publisher = new ServerPublisher(m_receiver->port(), &m_player_count, m_server_settings, this);
     }
+    return ExitCode::Ok;
+}
 
+ExitCode ServerContext::loadContent()
+{
     m_characters = akashi::config::loadTextFile(configPath("characters.txt"));
     m_backgrounds = akashi::config::loadTextFile(configPath("backgrounds.txt"));
 

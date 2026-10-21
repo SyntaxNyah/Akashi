@@ -41,6 +41,10 @@ class AKASHI_CORE_EXPORT WebSocketReceiver : public ClientReceiver
                       const QStringList &f_features = {}, QObject *parent = nullptr);
 
     bool start() override;
+    // While paused, connections wait in the listen queue instead of being
+    // accepted.
+    void pauseAccepting();
+    void resumeAccepting();
     QString lastError() const;
     int port() const;
 
