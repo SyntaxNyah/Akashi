@@ -88,15 +88,6 @@ class AKASHI_CORE_EXPORT CommandContext
     // The command being dispatched, as its registered name.
     QString commandName() const;
 
-    // The spec's declared escalation permission, empty when none - so a
-    // body checks canPerform(escalatesTo()) and /help can name it.
-    QString escalatesTo() const;
-
-    // True when the acted-on client holds the spec's declared immunity
-    // permission - "you cannot kick another CM" - false when the spec
-    // declares none or the id resolves to nobody.
-    bool targetIsImmune(int f_target_id) const;
-
     QString aclRoleId() const;
     void setAclRoleId(const QString &f_role_id);
     QString moderatorName() const;
@@ -104,10 +95,9 @@ class AKASHI_CORE_EXPORT CommandContext
     void setAuthenticated(bool f_state);
     void setInLoginPrompt(bool f_state);
 
-    int argc() const;
+    // The arguments as typed. Declared forms read theirs from Args; the
+    // scripting FFI hands these to script commands.
     const QStringList &arguments() const;
-    QString argument(int f_index) const;
-    std::optional<int> argumentAsInt(int f_index) const;
 
     void reply(const QString &f_message);
     // Tells the invoker why their input was refused, in the words
@@ -120,16 +110,13 @@ class AKASHI_CORE_EXPORT CommandContext
     // The person running the command.
     akashi::ClientSession *self() const;
 
-    // The connected client the argument names, found through
-    // PlayerDirectory::find. When it names nobody suitable this replies
-    // with the reason and answers nullptr, so a caller only returns.
-    akashi::ClientSession *findClient(int f_argument_index = 0, const PlayerFilter &f_filter = {});
-
     // The world as declared parameters see it from the invoker's place:
     // who is asking, where, who else is connected, the server's limits.
     std::unique_ptr<ParamScope> paramScope() const;
 
-    // The same lookup for plugin code, wrapped as a TargetPlayer.
+    // The connected client an argument names, found through
+    // PlayerDirectory::find, for script commands. When it names nobody
+    // suitable this replies with the reason and answers nothing.
     std::optional<TargetPlayer> resolveTarget(int f_argument_index = 0, const PlayerFilter &f_filter = {});
 
     static int genRand(int f_min, int f_max);

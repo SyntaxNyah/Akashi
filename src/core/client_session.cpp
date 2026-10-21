@@ -513,9 +513,9 @@ void ClientSession::handleCommand(QString command, int argc, QStringList argv)
     Q_UNUSED(argc)
     command = command.toLower();
 
-    // One lookup resolves the alias, the spec and the handler together.
+    // One lookup resolves the alias and the definition together.
     akashi::CommandRegistry *l_registry = m_server->commandRegistry();
-    const auto l_command = l_registry ? l_registry->lookup(command) : std::nullopt;
+    const auto l_command = l_registry ? l_registry->spec(command) : std::nullopt;
     if (!l_command) {
         sendServerMessage("Invalid command.");
         return;
@@ -524,66 +524,26 @@ void ClientSession::handleCommand(QString command, int argc, QStringList argv)
 }
 
 // Picks the form, checks its gate and runs it. The only way a command runs.
-void ClientSession::dispatchCommand(const akashi::CommandRegistry::Resolved &f_command, const QStringList &f_arguments)
+void ClientSession::dispatchCommand(const akashi::CommandSpec &f_spec, const QStringList &f_arguments)
 {
-    const akashi::CommandSpec &l_spec = f_command.spec;
-    const int argc = f_arguments.size();
     const auto l_can = [this](const QString &f_permission) { return canPerform(f_permission); };
 
-    // A declared command: the first form, in order, whose parameters all
-    // read among those the caller may use.
-    if (!l_spec.variants.isEmpty() && l_spec.variants.first().isDeclared()) {
-        akashi::CommandContext l_context(this, m_server, f_arguments, l_spec.name);
-        const akashi::FormChoice l_choice = akashi::chooseForm(l_spec, f_arguments, *l_context.paramScope(), l_can);
-        if (l_choice.form) {
-            l_choice.form->run(l_context, *l_choice.args);
-            return;
-        }
-        if (l_choice.denied) {
-            sendServerMessage("You do not have permission to use that command.");
-            return;
-        }
-        l_context.reply(l_choice.error);
-        // A count mistake is answered with the forms that can be typed.
-        if (l_choice.error.error == akashi::helpers::ParseError::MissingValue || l_choice.error.error == akashi::helpers::ParseError::ExtraValue) {
-            sendServerMessage("Usage:\n" + l_choice.usages.join(QLatin1Char('\n')));
-        }
+    // The first form, in order, whose parameters all read among those the
+    // caller may use.
+    akashi::CommandContext l_context(this, m_server, f_arguments, f_spec.name);
+    const akashi::FormChoice l_choice = akashi::chooseForm(f_spec, f_arguments, *l_context.paramScope(), l_can);
+    if (l_choice.form) {
+        l_choice.form->run(l_context, *l_choice.args);
         return;
     }
-
-    // A variant command carries its gates per argument shape; the
-    // matched form decides which permissions apply and what runs.
-    const akashi::CommandVariant *l_variant = l_spec.match(argc);
-    if (!l_spec.variants.isEmpty() && !l_variant) {
-        sendServerMessage("Invalid command syntax.");
-        if (!l_spec.usage.isEmpty()) {
-            sendServerMessage("The expected syntax for this command is: \n" + l_spec.usage);
-        }
-        return;
-    }
-
-    // Permission check: the matched form's whole gate. The same gate
-    // CommandRegistry::canUse answers /commands with.
-    const akashi::Gate &l_gate = l_variant ? l_variant->gate : l_spec.gate;
-    if (!l_gate.passes(l_can)) {
+    if (l_choice.denied) {
         sendServerMessage("You do not have permission to use that command.");
         return;
     }
-
-    if (!l_variant && argc < l_spec.min_args) {
-        sendServerMessage("Invalid command syntax.");
-        if (!l_spec.usage.isEmpty()) {
-            sendServerMessage("The expected syntax for this command is: \n" + l_spec.usage);
-        }
-        return;
-    }
-
-    akashi::CommandContext l_context(this, m_server, f_arguments, l_spec.name);
-    if (l_variant) {
-        l_variant->handler(l_context);
-    }
-    else {
-        f_command.handler(l_context);
+    l_context.reply(l_choice.error);
+    // A count mistake is answered with the forms that can be typed.
+    if (l_choice.error.error == akashi::helpers::ParseError::MissingValue || l_choice.error.error == akashi::helpers::ParseError::ExtraValue) {
+        sendServerMessage("Usage:\n" + l_choice.usages.join(QLatin1Char('\n')));
     }
 }
 

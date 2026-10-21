@@ -77,9 +77,8 @@ class StubScriptHost : public akashi::IScriptPluginHost
             // Registers something before failing, as a script that errors
             // halfway through its entry would.
             if (commands) {
-                akashi::CommandSpec l_spec;
-                l_spec.name = f_plugin_id.section(QLatin1Char('.'), -1) + QStringLiteral("_cmd");
-                commands->registerCommand(l_spec, [](akashi::CommandContext &) {}, f_plugin_id);
+                const QString l_name = f_plugin_id.section(QLatin1Char('.'), -1) + QStringLiteral("_cmd");
+                commands->registerCommand(akashi::singleForm(l_name, {}, {}, {}, [](akashi::CommandContext &, const akashi::Args &) {}), f_plugin_id);
             }
             return false;
         }
@@ -255,11 +254,8 @@ void tst_PluginManager::cleanupRemovesRegistrations()
     auto l_commands = std::make_shared<akashi::CommandRegistry>();
     l_services.registerService(l_commands);
 
-    akashi::CommandSpec l_spec;
-    l_spec.name = QStringLiteral("test_cmd");
-    l_spec.gate = {QStringLiteral("none")};
-    l_commands->registerCommand(
-        l_spec, [](akashi::CommandContext &) {}, QStringLiteral("test.plugin"));
+    l_commands->registerCommand(akashi::singleForm(QStringLiteral("test_cmd"), {QStringLiteral("none")}, {}, {}, [](akashi::CommandContext &, const akashi::Args &) {}),
+                                QStringLiteral("test.plugin"));
 
     QVERIFY(l_commands->contains(QStringLiteral("test_cmd")));
     l_commands->unregisterAll(QStringLiteral("test.plugin"));

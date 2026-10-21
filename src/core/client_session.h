@@ -404,7 +404,7 @@ class AKASHI_CORE_EXPORT ClientSession : public QObject, public IPacketContext
     akashi::PermissionQuery buildPermissionQuery(const QString &f_permission, int f_area_id) const;
 
     // Picks the form, checks its gate and runs it.
-    void dispatchCommand(const akashi::CommandRegistry::Resolved &f_command, const QStringList &f_arguments);
+    void dispatchCommand(const akashi::CommandSpec &f_spec, const QStringList &f_arguments);
 
     // The person's profile as told at the handshake; profile() exposes it.
     ClientProfile m_profile;

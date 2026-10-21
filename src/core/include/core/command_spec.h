@@ -13,7 +13,6 @@ namespace akashi {
 
 class CommandContext;
 
-using CommandHandler = std::function<void(CommandContext &)>;
 // The handler of a declared form: every parameter is already read and
 // checked, and arrives in Args.
 using ArgsHandler = std::function<void(CommandContext &, const Args &)>;
@@ -109,73 +108,35 @@ struct Gate
     bool operator==(const Gate &) const = default;
 };
 
-// One gated form of a command. Variants let one command carry different
-// permission requirements per argument shape, resolved at the dispatch gate
-// before the handler runs - no permission check hides inside a handler body,
-// so the command list sees every gate.
+// One gated form of a command: the parameters it reads and the gate it
+// needs. The dispatcher tries a command's forms in order and runs the
+// first whose parameters all read among those the caller passes - no
+// permission check hides inside a handler body, so the command list sees
+// every gate.
 struct CommandVariant
 {
-    QString id; // names the form, for /help and /why
-    int min_args = 0;
-    int max_args = -1; // -1 accepts any count at or above min_args
-    Gate gate;         // checked at the dispatch gate
-    QString usage;
+    QString id;    // names the form, for /help and /why
+    Gate gate;     // checked at the dispatch gate
+    QString usage; // generated from the parameters when left empty
     QString description;
-    CommandHandler handler;
-
-    // A declared form names its parameters and runs with checked values.
-    // The dispatcher tries declared forms in order and runs the first
-    // whose parameters all read; usage is generated when left empty.
     QList<Param> params;
     ArgsHandler run;
-
-    bool isDeclared() const { return bool(run); }
-
-    bool matches(int f_argc) const
-    {
-        return f_argc >= min_args && (max_args < 0 || f_argc <= max_args);
-    }
 };
 
 struct CommandSpec
 {
     QString name;
     QStringList aliases;
-    Gate gate;
-    int min_args = 0;
-    QString usage;
+    QString usage; // every form's usage, one per line; generated
     QString description;
-    int sensitive_args_from = -1;
-
-    // When non-empty, dispatch picks the first variant whose argument count
-    // matches and gates on ITS gate; the spec-level gate, min_args and
-    // registered handler are not consulted.
     QList<CommandVariant> variants;
 
-    // A value-dependent escalation the body triggers but the spec names,
-    // so /help shows it: timer 0 needs this, the SUPER role as a /setperms
-    // argument needs this.
-    QString escalates_to;
-    QString escalates_when; // the human words for /help
-
-    // A target holding this permission is immune to the command - "you
-    // cannot kick another CM" - declared here instead of hidden inline,
-    // enforced through CommandContext::targetIsImmune.
-    QString target_immune_if;
-
-    // The first variant taking this many arguments, or nullptr when no form
-    // does. Declaration order decides ties, so narrower forms come first.
-    // The result points into this spec's own storage, so bind the spec to a
-    // named variable first - never call match() on a CommandRegistry lookup
-    // returned by value (e.g. registry.spec(name)->match(argc)), or the
-    // pointer dangles once the temporary spec dies.
     // The first argument position the command log must hide, -1 for none:
-    // the declared sensitive_args_from, or the earliest sensitive()
-    // parameter of any declared form - the log runs before a form is
-    // picked, so the strictest position wins.
+    // the earliest sensitive() parameter of any form - the log runs before
+    // a form is picked, so the strictest position wins.
     int sensitiveFrom() const
     {
-        int l_from = sensitive_args_from;
+        int l_from = -1;
         for (const CommandVariant &l_variant : variants) {
             for (int i = 0; i < l_variant.params.size(); ++i) {
                 if (l_variant.params.at(i).isSensitive() && (l_from < 0 || i < l_from)) {
@@ -184,16 +145,6 @@ struct CommandSpec
             }
         }
         return l_from;
-    }
-
-    const CommandVariant *match(int f_argc) const
-    {
-        for (const CommandVariant &l_variant : variants) {
-            if (l_variant.matches(f_argc)) {
-                return &l_variant;
-            }
-        }
-        return nullptr;
     }
 };
 

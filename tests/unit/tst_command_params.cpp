@@ -529,10 +529,10 @@ void tst_CommandParams::registryRefusesBadlyMadeForms()
     QVERIFY(!l_registry.registerCommand(l_declared({param::integer(QStringLiteral("a"), 0, 1).optional(), param::integer(QStringLiteral("b"), 0, 1)}), QStringLiteral("core")));
     // Names are unique.
     QVERIFY(!l_registry.registerCommand(l_declared({param::integer(QStringLiteral("a"), 0, 1), param::integer(QStringLiteral("a"), 0, 1)}), QStringLiteral("core")));
-    // A command is declared or not as a whole.
-    CommandSpec l_mixed = l_declared({});
-    l_mixed.variants.append({.id = QStringLiteral("legacy"), .min_args = 1, .handler = [](akashi::CommandContext &) {}});
-    QVERIFY(!l_registry.registerCommand(l_mixed, QStringLiteral("core")));
+    // Every form has a body.
+    CommandSpec l_no_body = l_declared({});
+    l_no_body.variants.append({.id = QStringLiteral("empty")});
+    QVERIFY(!l_registry.registerCommand(l_no_body, QStringLiteral("core")));
 
     QVERIFY(l_registry.registerCommand(l_declared({param::integer(QStringLiteral("a"), 0, 1), param::text(QStringLiteral("b")).optional()}), QStringLiteral("core")));
 }

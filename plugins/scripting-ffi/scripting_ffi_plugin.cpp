@@ -137,33 +137,42 @@ static int ffiRegisterCommand(const char *f_name, size_t f_name_length,
         return 0;
     }
 
-    akashi::CommandSpec l_spec;
-    l_spec.name = toString(f_name, f_name_length);
-    l_spec.usage = toString(f_usage, f_usage_length);
-    l_spec.description = toString(f_description, f_description_length);
-    l_spec.min_args = f_min_args;
-    const QString l_permission = toString(f_permission, f_permission_length);
-    if (!l_permission.isEmpty()) {
-        l_spec.gate = {l_permission};
-    }
-    if (l_spec.name.isEmpty()) {
+    const QString l_name = toString(f_name, f_name_length);
+    if (l_name.isEmpty() || f_min_args < 0) {
         return 0;
     }
+    // A script command is one form: the arguments it needs, then whatever
+    // else was typed. The script reads them as typed, so it keeps its own
+    // usage line and its handler sees the raw arguments.
+    QList<akashi::Param> l_params;
+    for (int i = 1; i <= f_min_args; ++i) {
+        l_params.append(akashi::param::token(QStringLiteral("arg%1").arg(i)));
+    }
+    l_params.append(akashi::param::text(QStringLiteral("more")).optional());
+    const QString l_permission = toString(f_permission, f_permission_length);
 
-    const bool l_registered = s_commands->registerCommand(
-        l_spec, [f_handler, f_userdata](akashi::CommandContext &f_context) {
-        // The UTF-8 copies stay alive for the duration of the callback.
-        QList<QByteArray> l_utf8;
-        std::vector<const char *> l_argv;
-        const QStringList l_arguments = f_context.arguments();
-        l_utf8.reserve(l_arguments.size());
-        l_argv.reserve(l_arguments.size());
-        for (const QString &l_argument : l_arguments) {
-            l_utf8.append(l_argument.toUtf8());
-            l_argv.push_back(l_utf8.last().constData());
-        }
-        f_handler(f_userdata, reinterpret_cast<AkashiCommandContext *>(&f_context),
-                  int(l_argv.size()), l_argv.data()); }, toString(f_owner_id, f_owner_id_length));
+    akashi::CommandSpec l_spec;
+    l_spec.name = l_name;
+    l_spec.description = toString(f_description, f_description_length);
+    l_spec.variants = {{.id = QStringLiteral("run"),
+                        .gate = l_permission.isEmpty() ? akashi::Gate() : akashi::Gate(l_permission),
+                        .usage = toString(f_usage, f_usage_length),
+                        .params = l_params,
+                        .run = [f_handler, f_userdata](akashi::CommandContext &f_context, const akashi::Args &) {
+                            // The UTF-8 copies stay alive for the duration of the callback.
+                            QList<QByteArray> l_utf8;
+                            std::vector<const char *> l_argv;
+                            const QStringList l_arguments = f_context.arguments();
+                            l_utf8.reserve(l_arguments.size());
+                            l_argv.reserve(l_arguments.size());
+                            for (const QString &l_argument : l_arguments) {
+                                l_utf8.append(l_argument.toUtf8());
+                                l_argv.push_back(l_utf8.last().constData());
+                            }
+                            f_handler(f_userdata, reinterpret_cast<AkashiCommandContext *>(&f_context),
+                                      int(l_argv.size()), l_argv.data());
+                        }}};
+    const bool l_registered = s_commands->registerCommand(l_spec, toString(f_owner_id, f_owner_id_length));
     return l_registered ? 1 : 0;
 }
 

@@ -13,19 +13,15 @@
 
 class QThread;
 
-namespace tests::unittests {
-class tst_CommandRegistry;
-}
-
 namespace akashi {
 
 class ClientSession;
 class CommandContext;
 
 // Every command lives in a slot: its name. A slot holds one occupant - a
-// complete definition and its owner - or is empty. The registry never
-// hands a handler out: the dispatcher is the only way a command runs, so
-// every run passes the gate and is logged.
+// complete definition and its owner - or is empty. Outside the dispatcher
+// a command is only ever described: running one goes through its gate and
+// the command log.
 class AKASHI_CORE_EXPORT CommandRegistry : public IService
 {
   public:
@@ -34,20 +30,16 @@ class AKASHI_CORE_EXPORT CommandRegistry : public IService
     QString serviceId() const override;
     ServiceVersion serviceVersion() const override;
 
-    // Fills an empty slot. Fails when the name or one of its aliases is
-    // already taken - taking over a command is replace(), on purpose.
-    bool registerCommand(const CommandSpec &f_spec, CommandHandler f_handler,
-                         const QString &f_owner_id = {});
-
-    // Registers a command whose forms live in spec.variants; every variant
-    // must carry an id and a handler.
+    // Fills an empty slot. Fails when the definition is malformed (a form
+    // without an id or a body, or with parameters validParams refuses), or
+    // when the name or one of its aliases is already taken - taking over
+    // a command is replace(), on purpose.
     bool registerCommand(const CommandSpec &f_spec, const QString &f_owner_id);
 
     // Takes over a slot, whoever holds it, or fills it when empty. The
     // previous occupant is dropped, not kept: nothing restores it later.
     // Fails only when the spec is malformed or one of its aliases names
     // another slot. Taking a command from another owner is logged.
-    bool replace(const CommandSpec &f_spec, CommandHandler f_handler, const QString &f_owner_id);
     bool replace(const CommandSpec &f_spec, const QString &f_owner_id);
 
     // Empties a slot, whoever holds it; logged as a warning. The command
@@ -85,21 +77,9 @@ class AKASHI_CORE_EXPORT CommandRegistry : public IService
     void applyExtensions(const QString &f_path);
 
   private:
-    // The dispatcher's lookup; the only place a handler leaves the registry.
-    friend class ClientSession;
-    friend class tests::unittests::tst_CommandRegistry;
-
-    struct Resolved
-    {
-        CommandSpec spec;
-        CommandHandler handler;
-    };
-    std::optional<Resolved> lookup(const QString &f_command_name) const;
-
     struct Entry
     {
         CommandSpec spec; // the occupant's own definition and aliases
-        CommandHandler handler;
         QString owner_id;
         QString replaced_owner; // whose command this took over, if any
     };

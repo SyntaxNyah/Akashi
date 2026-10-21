@@ -147,13 +147,11 @@ static std::function<bool(const QString &)> callerPermissions(CommandContext &f_
     };
 }
 
-// The targets a command may not act on, as declared on its spec or on the
-// client parameters of its forms - once each, for /help and /why.
+// The targets a command may not act on, as declared on the client
+// parameters of its forms - once each, for /help and /why.
 static QStringList immunityLines(const CommandSpec &f_spec)
 {
     QStringList l_lines;
-    if (!f_spec.target_immune_if.isEmpty())
-        l_lines << "Cannot target holders of " + f_spec.target_immune_if + ".";
     for (const CommandVariant &l_variant : f_spec.variants) {
         for (const Param &l_param : l_variant.params) {
             if (l_param.isImmuneIfAreaOwner())
@@ -254,29 +252,18 @@ void cmdHelp(CommandContext &f_context, const Args &f_args)
         auto l_spec = l_registry->spec(f_command_name);
         if (!l_spec)
             return {};
-        QString l_text = "/" + l_spec->name;
-        if (!l_spec->usage.isEmpty())
-            l_text = l_spec->usage;
+        QString l_text = l_spec->usage;
         l_text += "\n" + (l_spec->description.isEmpty() ? QString("No details available.") : l_spec->description);
-        // A variant command lists each of its forms with its own gate; an
-        // all-of group renders its members joined by "+".
+        // Each form with its own gate; an all-of group renders its members
+        // joined by "+".
         for (const CommandVariant &l_variant : l_spec->variants) {
-            if (l_variant.usage.isEmpty())
-                continue;
             l_text += "\n  " + l_variant.usage;
             if (!l_variant.description.isEmpty())
                 l_text += " - " + l_variant.description;
             if (!l_variant.gate.isEmpty())
                 l_text += " [" + l_variant.gate.describe() + "]";
         }
-        // The declared value-dependent escalation and target immunity are
-        // part of the gate, so the help shows them.
-        if (!l_spec->escalates_to.isEmpty()) {
-            l_text += "\nNeeds " + l_spec->escalates_to;
-            if (!l_spec->escalates_when.isEmpty())
-                l_text += " when " + l_spec->escalates_when;
-            l_text += ".";
-        }
+        // Target immunity is part of the gate, so the help shows it.
         for (const QString &l_line : immunityLines(*l_spec))
             l_text += "\n" + l_line;
         if (const QString l_provider = providedBy(l_registry, f_command_name); !l_provider.isEmpty())
@@ -413,8 +400,8 @@ void cmdWhy(CommandContext &f_context, const Args &f_args)
     CommandRegistry *l_registry = f_context.server()->commandRegistry();
     if (l_registry->contains(l_query)) {
         // Players think in commands: resolve the binding, explain every
-        // permission the gate can ask for, and surface the declared
-        // escalation and immunity - the parts outside canPerform.
+        // permission a form's gate can ask for, and surface the declared
+        // immunity - the part outside canPerform.
         const auto l_spec = l_registry->spec(l_query);
         QStringList l_permissions;
         const auto l_collect = [&l_permissions](const Gate &f_gate) {
@@ -422,20 +409,9 @@ void cmdWhy(CommandContext &f_context, const Args &f_args)
                 if (!l_permissions.contains(l_permission))
                     l_permissions.append(l_permission);
         };
-        if (l_spec->variants.isEmpty()) {
-            l_lines << "/" + l_spec->name + " needs: " + l_spec->gate.describe();
-            l_collect(l_spec->gate);
-        }
-        else {
-            for (const CommandVariant &l_variant : l_spec->variants) {
-                l_lines << l_variant.usage + " needs: " + l_variant.gate.describe();
-                l_collect(l_variant.gate);
-            }
-        }
-        if (!l_spec->escalates_to.isEmpty()) {
-            l_lines << "Also needs " + l_spec->escalates_to + (l_spec->escalates_when.isEmpty() ? QString() : " when " + l_spec->escalates_when) + ".";
-            if (!l_permissions.contains(l_spec->escalates_to))
-                l_permissions.append(l_spec->escalates_to);
+        for (const CommandVariant &l_variant : l_spec->variants) {
+            l_lines << l_variant.usage + " needs: " + l_variant.gate.describe();
+            l_collect(l_variant.gate);
         }
         l_lines << immunityLines(*l_spec);
         if (const QString l_provider = providedBy(l_registry, l_query); !l_provider.isEmpty())

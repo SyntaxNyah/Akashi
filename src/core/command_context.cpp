@@ -104,29 +104,6 @@ QString CommandContext::commandName() const
     return m_command_name;
 }
 
-QString CommandContext::escalatesTo() const
-{
-    const auto l_spec = m_server->commandRegistry()->spec(m_command_name);
-    return l_spec ? l_spec->escalates_to : QString();
-}
-
-bool CommandContext::targetIsImmune(int f_target_id) const
-{
-    const auto l_spec = m_server->commandRegistry()->spec(m_command_name);
-    if (!l_spec || l_spec->target_immune_if.isEmpty()) {
-        return false;
-    }
-    // area.cm is the offer to *take* CM status, not the status itself:
-    // walk-in areas grant it to everyone, so immunity must be read from the
-    // area's live owner list rather than the permission.
-    if (l_spec->target_immune_if == akashi::permission::area_cm) {
-        akashi::Area *l_area = m_server->areaById(areaId());
-        return l_area && l_area->owners().contains(f_target_id);
-    }
-    akashi::ClientSession *l_target = m_server->clientById(f_target_id);
-    return l_target && l_target->canPerform(l_spec->target_immune_if);
-}
-
 QString CommandContext::aclRoleId() const { return m_invoker->aclRoleId(); }
 void CommandContext::setAclRoleId(const QString &f_role_id) { m_invoker->setAclRoleId(f_role_id); }
 QString CommandContext::moderatorName() const { return m_invoker->moderatorName(); }
@@ -134,22 +111,7 @@ void CommandContext::setModeratorName(const QString &f_name) { m_invoker->setMod
 void CommandContext::setAuthenticated(bool f_state) { m_invoker->setAuthenticated(f_state); }
 void CommandContext::setInLoginPrompt(bool f_state) { m_invoker->setInLoginPrompt(f_state); }
 
-int CommandContext::argc() const { return m_arguments.size(); }
 const QStringList &CommandContext::arguments() const { return m_arguments; }
-
-QString CommandContext::argument(int f_index) const
-{
-    if (f_index >= 0 && f_index < m_arguments.size()) {
-        return m_arguments.at(f_index);
-    }
-    return {};
-}
-
-std::optional<int> CommandContext::argumentAsInt(int f_index) const
-{
-    const auto l_number = helpers::parseInt(argument(f_index), QStringLiteral("number"));
-    return l_number ? std::optional<int>(*l_number) : std::nullopt;
-}
 
 void CommandContext::reply(const QString &f_message)
 {
@@ -227,22 +189,14 @@ akashi::ClientSession *CommandContext::self() const
     return m_invoker;
 }
 
-akashi::ClientSession *CommandContext::findClient(int f_argument_index, const PlayerFilter &f_filter)
-{
-    const auto l_found = m_server->playerDirectory().find(argument(f_argument_index), f_filter);
-    if (!l_found) {
-        reply(l_found.error());
-        return nullptr;
-    }
-    return *l_found;
-}
-
 std::optional<TargetPlayer> CommandContext::resolveTarget(int f_argument_index, const PlayerFilter &f_filter)
 {
-    if (akashi::ClientSession *l_client = findClient(f_argument_index, f_filter)) {
-        return TargetPlayer(l_client);
+    const auto l_found = m_server->playerDirectory().find(m_arguments.value(f_argument_index), f_filter);
+    if (!l_found) {
+        reply(l_found.error());
+        return std::nullopt;
     }
-    return std::nullopt;
+    return TargetPlayer(*l_found);
 }
 
 int CommandContext::genRand(int f_min, int f_max)

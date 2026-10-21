@@ -8,8 +8,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-#include <utility>
-
 namespace akashi {
 
 CommandRegistry::CommandRegistry() :
@@ -28,37 +26,29 @@ ServiceVersion CommandRegistry::serviceVersion() const
 
 bool CommandRegistry::validSpec(const CommandSpec &f_spec) const
 {
-    if (f_spec.name.isEmpty()) {
+    if (f_spec.name.isEmpty() || f_spec.variants.isEmpty()) {
         return false;
     }
-    // A command is declared or not as a whole: the dispatcher picks forms
-    // one way or the other, never both.
-    const bool l_declared = !f_spec.variants.isEmpty() && f_spec.variants.first().isDeclared();
     for (const CommandVariant &l_variant : f_spec.variants) {
-        if (l_variant.id.isEmpty() || l_variant.isDeclared() != l_declared) {
-            return false;
-        }
-        if (l_declared ? !validParams(l_variant.params) : !l_variant.handler) {
+        if (l_variant.id.isEmpty() || !l_variant.run || !validParams(l_variant.params)) {
             return false;
         }
     }
     return true;
 }
 
-// The definition as stored: declared forms get their usage generated from
-// their parameters, and the command's usage lists them, unless given.
+// The definition as stored: forms get their usage generated from their
+// parameters unless given, and the command's usage lists them.
 static CommandSpec prepared(CommandSpec f_spec)
 {
     QStringList l_usages;
     for (CommandVariant &l_variant : f_spec.variants) {
-        if (l_variant.isDeclared() && l_variant.usage.isEmpty()) {
+        if (l_variant.usage.isEmpty()) {
             l_variant.usage = usageOf(f_spec.name.toLower(), l_variant.params);
         }
         l_usages << l_variant.usage;
     }
-    if (f_spec.usage.isEmpty() && !f_spec.variants.isEmpty() && f_spec.variants.first().isDeclared()) {
-        f_spec.usage = l_usages.join(QLatin1Char('\n'));
-    }
+    f_spec.usage = l_usages.join(QLatin1Char('\n'));
     return f_spec;
 }
 
@@ -80,8 +70,7 @@ bool CommandRegistry::aliasesCollide(const CommandSpec &f_spec, const QString &f
     return false;
 }
 
-bool CommandRegistry::registerCommand(const CommandSpec &f_spec, CommandHandler f_handler,
-                                      const QString &f_owner_id)
+bool CommandRegistry::registerCommand(const CommandSpec &f_spec, const QString &f_owner_id)
 {
     AKASHI_ASSERT_OWNER_THREAD();
     const QString l_key = f_spec.name.toLower();
@@ -91,22 +80,14 @@ bool CommandRegistry::registerCommand(const CommandSpec &f_spec, CommandHandler 
         return false;
     }
     m_vacated.remove(l_key);
-    m_entries.insert(l_key, Entry{prepared(f_spec), std::move(f_handler), f_owner_id, {}});
+    m_entries.insert(l_key, Entry{prepared(f_spec), f_owner_id, {}});
     for (const QString &l_alias : f_spec.aliases) {
         m_aliases.insert(l_alias.toLower(), l_key);
     }
     return true;
 }
 
-bool CommandRegistry::registerCommand(const CommandSpec &f_spec, const QString &f_owner_id)
-{
-    if (f_spec.variants.isEmpty()) {
-        return false;
-    }
-    return registerCommand(f_spec, CommandHandler(), f_owner_id);
-}
-
-bool CommandRegistry::replace(const CommandSpec &f_spec, CommandHandler f_handler, const QString &f_owner_id)
+bool CommandRegistry::replace(const CommandSpec &f_spec, const QString &f_owner_id)
 {
     AKASHI_ASSERT_OWNER_THREAD();
     const QString l_key = f_spec.name.toLower();
@@ -128,7 +109,7 @@ bool CommandRegistry::replace(const CommandSpec &f_spec, CommandHandler f_handle
         dropOccupant(l_key);
     }
     m_vacated.remove(l_key);
-    m_entries.insert(l_key, Entry{prepared(f_spec), std::move(f_handler), f_owner_id, l_previous == f_owner_id ? QString() : l_previous});
+    m_entries.insert(l_key, Entry{prepared(f_spec), f_owner_id, l_previous == f_owner_id ? QString() : l_previous});
     for (const QString &l_alias : f_spec.aliases) {
         m_aliases.insert(l_alias.toLower(), l_key);
     }
@@ -140,14 +121,6 @@ bool CommandRegistry::replace(const CommandSpec &f_spec, CommandHandler f_handle
         qCInfo(akashiCommands).noquote() << QStringLiteral("%1 replaced /%2 from %3").arg(f_owner_id, l_key, l_previous);
     }
     return true;
-}
-
-bool CommandRegistry::replace(const CommandSpec &f_spec, const QString &f_owner_id)
-{
-    if (f_spec.variants.isEmpty()) {
-        return false;
-    }
-    return replace(f_spec, CommandHandler(), f_owner_id);
 }
 
 void CommandRegistry::dropOccupant(const QString &f_slot)
@@ -250,16 +223,6 @@ QHash<QString, QString> CommandRegistry::vacatedSlots() const
     return m_vacated;
 }
 
-std::optional<CommandRegistry::Resolved> CommandRegistry::lookup(const QString &f_command_name) const
-{
-    AKASHI_ASSERT_OWNER_THREAD();
-    const auto it = m_entries.constFind(resolve(f_command_name));
-    if (it == m_entries.constEnd()) {
-        return std::nullopt;
-    }
-    return Resolved{it->spec, it->handler};
-}
-
 QStringList CommandRegistry::commandNames() const
 {
     AKASHI_ASSERT_OWNER_THREAD();
@@ -278,9 +241,6 @@ bool CommandRegistry::canUse(const QString &f_command, const std::function<bool(
     const auto l_spec = spec(f_command);
     if (!l_spec) {
         return false;
-    }
-    if (l_spec->variants.isEmpty()) {
-        return l_spec->gate.passes(f_can_perform);
     }
     for (const CommandVariant &l_variant : l_spec->variants) {
         if (l_variant.gate.passes(f_can_perform)) {

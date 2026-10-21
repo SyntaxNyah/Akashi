@@ -50,85 +50,80 @@ class tst_CommandRegistry : public QObject
     void canUseMirrorsTheDispatchGate();
     void canUseChecksEveryVariantForm();
 
-    void variantMatchPicksByArgCount();
     void registerCommandValidatesVariants();
-
-  private:
-    static QString dispatchedDescription(const akashi::CommandRegistry &f_registry, const QString &f_name);
 };
 
-// A two-form command like /listperms: a free self form and a gated
-// one-or-more-argument form.
+static void noop(akashi::CommandContext &, const akashi::Args &) {}
+
+// A one-form command, open or behind the given gate.
+static akashi::CommandSpec gatedSpec(const QString &f_name, const QStringList &f_aliases = {}, const akashi::Gate &f_gate = {})
+{
+    akashi::CommandSpec l_spec;
+    l_spec.name = f_name;
+    l_spec.aliases = f_aliases;
+    l_spec.variants = {{.id = QStringLiteral("run"), .gate = f_gate, .run = noop}};
+    return l_spec;
+}
+
+// A two-form command like /listperms: a free self form and a gated form
+// that names someone.
 static akashi::CommandSpec makeVariantSpec(const QString &f_name)
 {
-    return akashi::CommandSpec{
-        .name = f_name,
-        .usage = "/" + f_name + " [target]",
-        .variants = {
-            {QStringLiteral("own"), 0, 0, {}, {}, {}, [](akashi::CommandContext &) {}},
-            {QStringLiteral("user"), 1, -1, {QStringLiteral("modify_users")}, {}, {}, [](akashi::CommandContext &) {}},
-        },
+    akashi::CommandSpec l_spec;
+    l_spec.name = f_name;
+    l_spec.variants = {
+        {.id = QStringLiteral("own"), .run = noop},
+        {.id = QStringLiteral("user"), .gate = {QStringLiteral("modify_users")}, .params = {akashi::param::token(QStringLiteral("target"))}, .run = noop},
     };
+    return l_spec;
 }
 
 void tst_CommandRegistry::registerAndLookup()
 {
     akashi::CommandRegistry l_registry;
-    bool l_handler_called = false;
-    akashi::CommandSpec l_spec{QStringLiteral("test"), {}, {}, 0, {}, {}};
-    QVERIFY(l_registry.registerCommand(l_spec, [&](akashi::CommandContext &) { l_handler_called = true; }));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("test")), QStringLiteral("core")));
     QVERIFY(l_registry.contains("test"));
 
     if (auto l_found = l_registry.spec("test")) {
         QCOMPARE(l_found->name, QStringLiteral("test"));
+        // The stored definition carries its generated usage.
+        QCOMPARE(l_found->usage, QStringLiteral("/test"));
     }
     else {
         QFAIL("spec not found");
     }
-
-    // Only the dispatcher (and this friend test) can reach the handler.
-    const auto l_resolved = l_registry.lookup("test");
-    QVERIFY(l_resolved.has_value());
-    QVERIFY(l_resolved->handler);
-}
-
-static akashi::CommandSpec simpleSpec(const QString &f_name, const QStringList &f_aliases = {})
-{
-    return akashi::CommandSpec{f_name, f_aliases, {}, 0, {}, {}};
 }
 
 // Which definition the dispatcher would run for the name, told apart by
 // its description; empty when nothing would run.
-QString tst_CommandRegistry::dispatchedDescription(const akashi::CommandRegistry &f_registry, const QString &f_name)
+static QString dispatchedDescription(const akashi::CommandRegistry &f_registry, const QString &f_name)
 {
-    const auto l_resolved = f_registry.lookup(f_name);
-    if (!l_resolved || !l_resolved->handler)
-        return {};
-    return l_resolved->spec.description;
+    const auto l_spec = f_registry.spec(f_name);
+    return l_spec ? l_spec->description : QString();
 }
 
 void tst_CommandRegistry::registerRefusesATakenSlot()
 {
     akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll"), {QStringLiteral("dice")}), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("roll"), {QStringLiteral("dice")}), QStringLiteral("core")));
 
     // The name, or an alias of it, is a take-over: that is replace().
-    QVERIFY(!l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
-    QVERIFY(!l_registry.registerCommand(simpleSpec(QStringLiteral("dice")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+    QVERIFY(!l_registry.registerCommand(gatedSpec(QStringLiteral("roll")), QStringLiteral("dice-plus")));
+    QVERIFY(!l_registry.registerCommand(gatedSpec(QStringLiteral("dice")), QStringLiteral("dice-plus")));
     QCOMPARE(l_registry.ownerOf(QStringLiteral("roll")), QStringLiteral("core"));
 }
 
 void tst_CommandRegistry::replaceTakesOverAndDropsThePrevious()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_core = simpleSpec(QStringLiteral("roll"), {QStringLiteral("dice")});
+    akashi::CommandSpec l_core = gatedSpec(QStringLiteral("roll"), {QStringLiteral("dice")});
     l_core.description = QStringLiteral("core roll");
-    QVERIFY(l_registry.registerCommand(l_core, [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(l_core, QStringLiteral("core")));
 
-    akashi::CommandSpec l_plugin = simpleSpec(QStringLiteral("roll"), {QStringLiteral("rr")});
+    akashi::CommandSpec l_plugin = gatedSpec(QStringLiteral("roll"), {QStringLiteral("rr")});
     l_plugin.description = QStringLiteral("plugin roll");
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression("dice-plus.*replaced the core command /roll"));
-    QVERIFY(l_registry.replace(l_plugin, [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+    QVERIFY(l_registry.replace(l_plugin, QStringLiteral("dice-plus")));
 
     // The plugin's definition answers now, and says whose it replaced.
     QCOMPARE(dispatchedDescription(l_registry, QStringLiteral("roll")), QStringLiteral("plugin roll"));
@@ -139,9 +134,9 @@ void tst_CommandRegistry::replaceTakesOverAndDropsThePrevious()
     QVERIFY(l_registry.contains(QStringLiteral("rr")));
 
     // Last wins: a later replace takes it again, quietly between plugins.
-    akashi::CommandSpec l_later = simpleSpec(QStringLiteral("roll"));
+    akashi::CommandSpec l_later = gatedSpec(QStringLiteral("roll"));
     l_later.description = QStringLiteral("later roll");
-    QVERIFY(l_registry.replace(l_later, [](akashi::CommandContext &) {}, QStringLiteral("dice-pro")));
+    QVERIFY(l_registry.replace(l_later, QStringLiteral("dice-pro")));
     QCOMPARE(dispatchedDescription(l_registry, QStringLiteral("roll")), QStringLiteral("later roll"));
     QCOMPARE(l_registry.replacedOwnerOf(QStringLiteral("roll")), QStringLiteral("dice-plus"));
     QVERIFY(!l_registry.contains(QStringLiteral("rr")));
@@ -150,7 +145,7 @@ void tst_CommandRegistry::replaceTakesOverAndDropsThePrevious()
 void tst_CommandRegistry::replaceKeepsTheOperatorsAliases()
 {
     akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("roll")), QStringLiteral("core")));
 
     QTemporaryDir l_dir;
     QVERIFY(l_dir.isValid());
@@ -162,7 +157,7 @@ void tst_CommandRegistry::replaceKeepsTheOperatorsAliases()
     l_registry.applyExtensions(l_path);
 
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression("replaced the core command /roll"));
-    QVERIFY(l_registry.replace(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+    QVERIFY(l_registry.replace(gatedSpec(QStringLiteral("roll")), QStringLiteral("dice-plus")));
 
     // The operator's alias belongs to the slot, so it reaches the new occupant.
     QVERIFY(l_registry.contains(QStringLiteral("r")));
@@ -173,15 +168,15 @@ void tst_CommandRegistry::replaceKeepsTheOperatorsAliases()
 void tst_CommandRegistry::replaceRefusesAnAliasIntoAnotherSlot()
 {
     akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("core")));
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("kick"), {QStringLiteral("k")}), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("roll")), QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("kick"), {QStringLiteral("k")}), QStringLiteral("core")));
 
     // One replace may not take a second command through an alias, nor
     // replace a command by naming another's alias.
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression("could not replace /roll"));
-    QVERIFY(!l_registry.replace(simpleSpec(QStringLiteral("roll"), {QStringLiteral("kick")}), [](akashi::CommandContext &) {}, QStringLiteral("p")));
+    QVERIFY(!l_registry.replace(gatedSpec(QStringLiteral("roll"), {QStringLiteral("kick")}), QStringLiteral("p")));
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression("could not replace /k"));
-    QVERIFY(!l_registry.replace(simpleSpec(QStringLiteral("k")), [](akashi::CommandContext &) {}, QStringLiteral("p")));
+    QVERIFY(!l_registry.replace(gatedSpec(QStringLiteral("k")), QStringLiteral("p")));
     QCOMPARE(l_registry.ownerOf(QStringLiteral("roll")), QStringLiteral("core"));
     QCOMPARE(l_registry.ownerOf(QStringLiteral("kick")), QStringLiteral("core"));
 }
@@ -189,21 +184,21 @@ void tst_CommandRegistry::replaceRefusesAnAliasIntoAnotherSlot()
 void tst_CommandRegistry::vacateEmptiesTheSlot()
 {
     akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("8ball"), {QStringLiteral("eightball")}), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("8ball"), {QStringLiteral("eightball")}), QStringLiteral("core")));
 
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression("no-fun vacated /8ball"));
     QVERIFY(l_registry.vacate(QStringLiteral("8ball"), QStringLiteral("no-fun")));
 
     QVERIFY(!l_registry.contains(QStringLiteral("8ball")));
     QVERIFY(!l_registry.contains(QStringLiteral("eightball")));
-    QVERIFY(!l_registry.lookup(QStringLiteral("8ball")));
+    QVERIFY(!l_registry.spec(QStringLiteral("8ball")));
     QVERIFY(!l_registry.commandNames().contains(QStringLiteral("8ball")));
     QCOMPARE(l_registry.vacatedSlots().value(QStringLiteral("8ball")), QStringLiteral("no-fun"));
     // An empty slot cannot be emptied again.
     QVERIFY(!l_registry.vacate(QStringLiteral("8ball"), QStringLiteral("no-fun")));
 
     // It stays empty until something registers it.
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("8ball")), [](akashi::CommandContext &) {}, QStringLiteral("fortune")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("8ball")), QStringLiteral("fortune")));
     QCOMPARE(l_registry.ownerOf(QStringLiteral("8ball")), QStringLiteral("fortune"));
     QVERIFY(l_registry.vacatedSlots().isEmpty());
 }
@@ -211,9 +206,9 @@ void tst_CommandRegistry::vacateEmptiesTheSlot()
 void tst_CommandRegistry::unloadLeavesATakenSlotEmpty()
 {
     akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("roll")), QStringLiteral("core")));
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression("replaced the core command /roll"));
-    QVERIFY(l_registry.replace(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+    QVERIFY(l_registry.replace(gatedSpec(QStringLiteral("roll")), QStringLiteral("dice-plus")));
 
     // The plugin unloads: nothing is restored, and the hole is reported.
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression("dice-plus.*left /roll empty"));
@@ -225,7 +220,7 @@ void tst_CommandRegistry::unloadLeavesATakenSlotEmpty()
 void tst_CommandRegistry::unloadOfAPluginsOwnCommandIsQuiet()
 {
     akashi::CommandRegistry l_registry;
-    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("slowmode")), [](akashi::CommandContext &) {}, QStringLiteral("slowmode")));
+    QVERIFY(l_registry.registerCommand(gatedSpec(QStringLiteral("slowmode")), QStringLiteral("slowmode")));
 
     // Its own command leaving with it is ordinary: no warning, no hole.
     QTest::failOnWarning(QRegularExpression("left /slowmode empty"));
@@ -237,8 +232,8 @@ void tst_CommandRegistry::unloadOfAPluginsOwnCommandIsQuiet()
 void tst_CommandRegistry::lookupByAlias()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_spec{QStringLiteral("getarea"), {QStringLiteral("ga")}, {}, 0, {}, {}};
-    QVERIFY(l_registry.registerCommand(l_spec, [](akashi::CommandContext &) {}));
+    const akashi::CommandSpec l_spec = gatedSpec(QStringLiteral("getarea"), {QStringLiteral("ga")});
+    QVERIFY(l_registry.registerCommand(l_spec, QStringLiteral("core")));
 
     QVERIFY(l_registry.contains("ga"));
     if (auto l_found = l_registry.spec("ga")) {
@@ -252,8 +247,8 @@ void tst_CommandRegistry::lookupByAlias()
 void tst_CommandRegistry::caseInsensitiveLookup()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_spec{QStringLiteral("GetArea"), {}, {}, 0, {}, {}};
-    QVERIFY(l_registry.registerCommand(l_spec, [](akashi::CommandContext &) {}));
+    const akashi::CommandSpec l_spec = gatedSpec(QStringLiteral("GetArea"));
+    QVERIFY(l_registry.registerCommand(l_spec, QStringLiteral("core")));
     QVERIFY(l_registry.contains("getarea"));
     QVERIFY(l_registry.contains("GETAREA"));
 }
@@ -261,24 +256,24 @@ void tst_CommandRegistry::caseInsensitiveLookup()
 void tst_CommandRegistry::duplicateRegistrationFails()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_spec{QStringLiteral("test"), {}, {}, 0, {}, {}};
-    QVERIFY(l_registry.registerCommand(l_spec, [](akashi::CommandContext &) {}));
-    QVERIFY(!l_registry.registerCommand(l_spec, [](akashi::CommandContext &) {}));
+    const akashi::CommandSpec l_spec = gatedSpec(QStringLiteral("test"));
+    QVERIFY(l_registry.registerCommand(l_spec, QStringLiteral("core")));
+    QVERIFY(!l_registry.registerCommand(l_spec, QStringLiteral("core")));
 }
 
 void tst_CommandRegistry::collidingAliasRegistrationFails()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_first{QStringLiteral("kick"), {QStringLiteral("k")}, {}, 0, {}, {}};
-    QVERIFY(l_registry.registerCommand(l_first, [](akashi::CommandContext &) {}));
+    const akashi::CommandSpec l_first = gatedSpec(QStringLiteral("kick"), {QStringLiteral("k")});
+    QVERIFY(l_registry.registerCommand(l_first, QStringLiteral("core")));
 
     // A new command whose name shadows an existing alias is refused.
-    akashi::CommandSpec l_name_clash{QStringLiteral("k"), {}, {}, 0, {}, {}};
-    QVERIFY(!l_registry.registerCommand(l_name_clash, [](akashi::CommandContext &) {}));
+    const akashi::CommandSpec l_name_clash = gatedSpec(QStringLiteral("k"));
+    QVERIFY(!l_registry.registerCommand(l_name_clash, QStringLiteral("core")));
 
     // So is one whose alias shadows an existing command name.
-    akashi::CommandSpec l_alias_clash{QStringLiteral("boot"), {QStringLiteral("kick")}, {}, 0, {}, {}};
-    QVERIFY(!l_registry.registerCommand(l_alias_clash, [](akashi::CommandContext &) {}));
+    const akashi::CommandSpec l_alias_clash = gatedSpec(QStringLiteral("boot"), {QStringLiteral("kick")});
+    QVERIFY(!l_registry.registerCommand(l_alias_clash, QStringLiteral("core")));
 
     // The refusal leaves nothing behind - not even the fresh name.
     QVERIFY(!l_registry.contains("boot"));
@@ -288,9 +283,9 @@ void tst_CommandRegistry::collidingAliasRegistrationFails()
 void tst_CommandRegistry::unregisterByOwner()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_spec{QStringLiteral("test"), {QStringLiteral("t")}, {}, 0, {}, {}};
+    const akashi::CommandSpec l_spec = gatedSpec(QStringLiteral("test"), {QStringLiteral("t")});
     QVERIFY(l_registry.registerCommand(
-        l_spec, [](akashi::CommandContext &) {}, QStringLiteral("plugin_a")));
+        l_spec, QStringLiteral("plugin_a")));
     QVERIFY(l_registry.contains("test"));
     QVERIFY(l_registry.contains("t"));
 
@@ -302,9 +297,9 @@ void tst_CommandRegistry::unregisterByOwner()
 void tst_CommandRegistry::unregisterUnknownOwnerIsANoOp()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_spec{QStringLiteral("test"), {QStringLiteral("t")}, {}, 0, {}, {}};
+    const akashi::CommandSpec l_spec = gatedSpec(QStringLiteral("test"), {QStringLiteral("t")});
     QVERIFY(l_registry.registerCommand(
-        l_spec, [](akashi::CommandContext &) {}, QStringLiteral("plugin_a")));
+        l_spec, QStringLiteral("plugin_a")));
     QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("plugin_a")));
 
     l_registry.unregisterAll(QStringLiteral("nobody"));
@@ -323,8 +318,8 @@ void tst_CommandRegistry::containsCheck()
 void tst_CommandRegistry::commandNamesList()
 {
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("alpha"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
-    l_registry.registerCommand({QStringLiteral("beta"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand(gatedSpec(QStringLiteral("alpha")), QStringLiteral("core"));
+    l_registry.registerCommand(gatedSpec(QStringLiteral("beta")), QStringLiteral("core"));
 
     QStringList l_names = l_registry.commandNames();
     QCOMPARE(l_names.size(), 2);
@@ -366,7 +361,7 @@ void tst_CommandRegistry::aclRoleEmptyIsNone()
 void tst_CommandRegistry::applyExtensionsAddsAliases()
 {
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("roll"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand(gatedSpec(QStringLiteral("roll")), QStringLiteral("core"));
 
     QTemporaryDir l_dir;
     QVERIFY(l_dir.isValid());
@@ -391,7 +386,7 @@ void tst_CommandRegistry::applyExtensionsReportsAndIgnoresPermissionOverrides()
     // still carries one must not change any gate - and must say so out
     // loud, since the override may have been tightening the command.
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("kick"), {}, {QStringLiteral("kick")}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand(gatedSpec(QStringLiteral("kick"), {}, {QStringLiteral("kick")}), QStringLiteral("core"));
     QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("core")));
 
     QTemporaryDir l_dir;
@@ -407,9 +402,9 @@ void tst_CommandRegistry::applyExtensionsReportsAndIgnoresPermissionOverrides()
     l_registry.applyExtensions(l_path);
 
     // Every gate is what the command declared.
-    QCOMPARE(l_registry.spec("kick")->gate.permissions(), QStringList{QStringLiteral("kick")});
+    QCOMPARE(l_registry.spec("kick")->variants.at(0).gate.permissions(), QStringList{QStringLiteral("kick")});
     const auto l_listperms = l_registry.spec("listperms");
-    QCOMPARE(l_listperms->match(1)->gate.permissions(), QStringList{QStringLiteral("modify_users")});
+    QCOMPARE(l_listperms->variants.at(1).gate.permissions(), QStringList{QStringLiteral("modify_users")});
     // The aliases in the same entry still apply.
     QVERIFY(l_registry.contains(QStringLiteral("boot")));
 }
@@ -445,8 +440,8 @@ void tst_CommandRegistry::requirementGroupsExpressAnd()
     akashi::CommandSpec l_spec;
     l_spec.name = QStringLiteral("gated");
     l_spec.variants = {
-        {.id = QStringLiteral("own"), .min_args = 1, .max_args = 1, .gate = {QStringLiteral("gamemaster")}, .handler = [](akashi::CommandContext &) {}},
-        {.id = QStringLiteral("cross"), .min_args = 2, .max_args = -1, .gate = akashi::Gate::allOf({QStringLiteral("gamemaster"), QStringLiteral("kick")}), .handler = [](akashi::CommandContext &) {}},
+        {.id = QStringLiteral("own"), .gate = {QStringLiteral("gamemaster")}, .params = {akashi::param::token(QStringLiteral("target"))}, .run = noop},
+        {.id = QStringLiteral("cross"), .gate = akashi::Gate::allOf({QStringLiteral("gamemaster"), QStringLiteral("kick")}), .params = {akashi::param::token(QStringLiteral("target")), akashi::param::token(QStringLiteral("area"))}, .run = noop},
     };
     QVERIFY(l_registry.registerCommand(l_spec, QStringLiteral("core")));
     QVERIFY(l_registry.canUse(QStringLiteral("gated"), l_holding({QStringLiteral("gamemaster")})));
@@ -456,7 +451,7 @@ void tst_CommandRegistry::requirementGroupsExpressAnd()
 void tst_CommandRegistry::applyExtensionsSkipsUnknownCommand()
 {
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("kick"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand(gatedSpec(QStringLiteral("kick")), QStringLiteral("core"));
 
     QTemporaryDir l_dir;
     QVERIFY(l_dir.isValid());
@@ -475,8 +470,8 @@ void tst_CommandRegistry::applyExtensionsSkipsUnknownCommand()
 void tst_CommandRegistry::applyExtensionsSkipsCollidingAlias()
 {
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("kick"), {QStringLiteral("k")}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
-    l_registry.registerCommand({QStringLiteral("ban"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand(gatedSpec(QStringLiteral("kick"), {QStringLiteral("k")}), QStringLiteral("core"));
+    l_registry.registerCommand(gatedSpec(QStringLiteral("ban")), QStringLiteral("core"));
 
     QTemporaryDir l_dir;
     QVERIFY(l_dir.isValid());
@@ -499,7 +494,7 @@ void tst_CommandRegistry::applyExtensionsSkipsCollidingAlias()
 void tst_CommandRegistry::applyExtensionsMissingFileIsNoop()
 {
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("test"), {}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand(gatedSpec(QStringLiteral("test")), QStringLiteral("core"));
 
     l_registry.applyExtensions(QStringLiteral("/nonexistent/path/ext.json"));
 
@@ -509,7 +504,7 @@ void tst_CommandRegistry::applyExtensionsMissingFileIsNoop()
 void tst_CommandRegistry::applyExtensionsSilentlySkipsSameCommandAlias()
 {
     akashi::CommandRegistry l_registry;
-    l_registry.registerCommand({QStringLiteral("roll"), {QStringLiteral("r")}, {}, 0, {}, {}}, [](akashi::CommandContext &) {});
+    l_registry.registerCommand(gatedSpec(QStringLiteral("roll"), {QStringLiteral("r")}), QStringLiteral("core"));
 
     QTemporaryDir l_dir;
     QVERIFY(l_dir.isValid());
@@ -530,10 +525,10 @@ void tst_CommandRegistry::applyExtensionsSilentlySkipsSameCommandAlias()
 void tst_CommandRegistry::canUseMirrorsTheDispatchGate()
 {
     akashi::CommandRegistry l_registry;
-    akashi::CommandSpec l_open{QStringLiteral("about"), {}, {}, 0, {}, {}};
-    akashi::CommandSpec l_gated{QStringLiteral("ban"), {QStringLiteral("b")}, {QStringLiteral("ban")}, 3, {}, {}};
-    QVERIFY(l_registry.registerCommand(l_open, [](akashi::CommandContext &) {}));
-    QVERIFY(l_registry.registerCommand(l_gated, [](akashi::CommandContext &) {}));
+    const akashi::CommandSpec l_open = gatedSpec(QStringLiteral("about"));
+    const akashi::CommandSpec l_gated = gatedSpec(QStringLiteral("ban"), {QStringLiteral("b")}, {QStringLiteral("ban")});
+    QVERIFY(l_registry.registerCommand(l_open, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(l_gated, QStringLiteral("core")));
 
     const auto l_none = [](const QString &) { return false; };
     const auto l_mod = [](const QString &f_permission) { return f_permission == QStringLiteral("ban"); };
@@ -558,8 +553,8 @@ void tst_CommandRegistry::canUseChecksEveryVariantForm()
     const akashi::CommandSpec l_all_gated{
         .name = QStringLiteral("uncm"),
         .variants = {
-            {QStringLiteral("own"), 0, 0, {QStringLiteral("gamemaster")}, {}, {}, [](akashi::CommandContext &) {}},
-            {QStringLiteral("other"), 1, -1, {QStringLiteral("remove_gamemaster")}, {}, {}, [](akashi::CommandContext &) {}},
+            {.id = QStringLiteral("own"), .gate = {QStringLiteral("gamemaster")}, .run = noop},
+            {.id = QStringLiteral("other"), .gate = {QStringLiteral("remove_gamemaster")}, .params = {akashi::param::token(QStringLiteral("target"))}, .run = noop},
         },
     };
     QVERIFY(l_registry.registerCommand(l_all_gated, QStringLiteral("core")));
@@ -569,44 +564,26 @@ void tst_CommandRegistry::canUseChecksEveryVariantForm()
     QVERIFY(l_registry.canUse("uncm", [](const QString &f_permission) { return f_permission == QStringLiteral("remove_gamemaster"); }));
 }
 
-void tst_CommandRegistry::variantMatchPicksByArgCount()
-{
-    const akashi::CommandSpec l_spec = makeVariantSpec(QStringLiteral("listperms"));
-
-    // First matching form in declaration order wins.
-    QCOMPARE(l_spec.match(0)->id, QStringLiteral("own"));
-    QCOMPARE(l_spec.match(1)->id, QStringLiteral("user"));
-    QCOMPARE(l_spec.match(5)->id, QStringLiteral("user"));
-
-    // Bounded windows reject counts outside them.
-    const akashi::CommandSpec l_bounded{
-        .variants = {
-            {QStringLiteral("own"), 1, 1, {}, {}, {}, [](akashi::CommandContext &) {}},
-            {QStringLiteral("user"), 2, 2, {}, {}, {}, [](akashi::CommandContext &) {}},
-        },
-    };
-    QCOMPARE(l_bounded.match(0), nullptr);
-    QCOMPARE(l_bounded.match(1)->id, QStringLiteral("own"));
-    QCOMPARE(l_bounded.match(2)->id, QStringLiteral("user"));
-    QCOMPARE(l_bounded.match(3), nullptr);
-}
-
 void tst_CommandRegistry::registerCommandValidatesVariants()
 {
     akashi::CommandRegistry l_registry;
 
-    // The handlerless overload needs at least one variant.
+    // A command needs at least one form.
     const akashi::CommandSpec l_empty{.name = QStringLiteral("empty")};
     QVERIFY(!l_registry.registerCommand(l_empty, QStringLiteral("core")));
 
-    // Every variant needs an id and a handler.
+    // Every form needs an id and a body, and parameters validParams accepts.
     akashi::CommandSpec l_no_id = makeVariantSpec(QStringLiteral("noid"));
     l_no_id.variants[0].id.clear();
     QVERIFY(!l_registry.registerCommand(l_no_id, QStringLiteral("core")));
 
     akashi::CommandSpec l_no_handler = makeVariantSpec(QStringLiteral("nohandler"));
-    l_no_handler.variants[1].handler = {};
+    l_no_handler.variants[1].run = {};
     QVERIFY(!l_registry.registerCommand(l_no_handler, QStringLiteral("core")));
+
+    akashi::CommandSpec l_bad_params = makeVariantSpec(QStringLiteral("badparams"));
+    l_bad_params.variants[1].params.prepend(akashi::param::text(QStringLiteral("rest")));
+    QVERIFY(!l_registry.registerCommand(l_bad_params, QStringLiteral("core")));
 
     QVERIFY(l_registry.registerCommand(makeVariantSpec(QStringLiteral("listperms")), QStringLiteral("core")));
     QCOMPARE(l_registry.spec("listperms")->variants.size(), 2);
