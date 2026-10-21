@@ -770,12 +770,21 @@ void ServerContext::armStoredSanctions()
     }
 }
 
-void ServerContext::applyStoredSanctions(akashi::ClientSession *f_client)
+bool ServerContext::applyStoredSanctions(akashi::ClientSession *f_client)
 {
-    const QList<DBManager::SanctionInfo> l_active = db_manager->sanctionsForIdentity(f_client->ipid(), f_client->hwid(), QDateTime::currentSecsSinceEpoch());
-    for (const DBManager::SanctionInfo &l_sanction : l_active) {
+    const auto l_active = db_manager->sanctionsForIdentity(f_client->ipid(), f_client->hwid(), QDateTime::currentSecsSinceEpoch());
+    if (!l_active) {
+        return false;
+    }
+    for (const DBManager::SanctionInfo &l_sanction : *l_active) {
         applySanctionToSession(f_client, l_sanction.sanction, l_sanction.data);
     }
+    return true;
+}
+
+QString ServerContext::storedSanctionsUnreadable()
+{
+    return QStringLiteral("Your sanctions could not be checked. Try again later.");
 }
 
 ExitCode ServerContext::startListening()
@@ -1298,8 +1307,17 @@ void ServerContext::inboundClient(akashi::ITransport *f_transport)
         return;
     }
 
+    // Like the ban checks, an unreadable sanction list turns the client
+    // away rather than letting a muted person in unmuted.
+    if (!applyStoredSanctions(client)) {
+        l_socket->write(akashi::Packet("BD", {storedSanctionsUnreadable()}));
+        m_player_directory.returnId(user_id);
+        connect(l_socket, &akashi::ITransport::clientDisconnected, client, &QObject::deleteLater);
+        l_socket->close();
+        return;
+    }
+
     m_player_directory.addClient(user_id, client);
-    applyStoredSanctions(client);
     connect(client, &akashi::ClientSession::transportClosed, this, std::bind_front(&ServerContext::onClientTransportClosed, this, client));
     connect(client, &akashi::ClientSession::reconnectTimedOut, this, std::bind_front(&ServerContext::removeClient, this, client));
 

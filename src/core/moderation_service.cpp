@@ -54,7 +54,8 @@ QList<SanctionEntry> CoreModerationService::activeSanctions(const QString &f_ipi
         return {};
     }
     QList<SanctionEntry> l_sanctions;
-    const QList<DBManager::SanctionInfo> l_rows = m_db->sanctionsFor(f_ipid, QDateTime::currentSecsSinceEpoch());
+    // A failed lookup was already logged; the caller sees no sanctions.
+    const QList<DBManager::SanctionInfo> l_rows = m_db->sanctionsFor(f_ipid, QDateTime::currentSecsSinceEpoch()).value_or(QList<DBManager::SanctionInfo>{});
     l_sanctions.reserve(l_rows.size());
     for (const DBManager::SanctionInfo &l_row : l_rows) {
         SanctionEntry l_entry;

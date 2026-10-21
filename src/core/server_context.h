@@ -642,8 +642,11 @@ class AKASHI_CORE_EXPORT ServerContext : public QObject
      * @brief Applies the stored sanctions matching a connecting client's
      * IPID and HWID. Runs at connect and again once the client announces
      * its hardware id, so both identifiers are checked before it can act.
+     * Returns false when the sanctions could not be read; the caller then
+     * turns the client away with storedSanctionsUnreadable().
      */
-    void applyStoredSanctions(akashi::ClientSession *f_client);
+    bool applyStoredSanctions(akashi::ClientSession *f_client);
+    static QString storedSanctionsUnreadable();
 
   public Q_SLOTS:
     /**

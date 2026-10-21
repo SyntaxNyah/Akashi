@@ -23,6 +23,7 @@ class tst_DBManager : public QObject
     void untimedSanctionsHoldUntilLifted();
     void sanctionsMatchByHwid();
     void oldSanctionTablesGainTheNewColumns();
+    void sanctionLookupsFailClosed();
     void failedMigrationStopsTheChain();
 };
 
@@ -139,14 +140,14 @@ void tst_DBManager::sanctionsStoreAndExpire()
     l_manager.upsertSanction({"5678", "muted", "moderator", l_now, l_now + 600});
 
     // Only the still-active sanctions of the asked-for IPID come back.
-    QList<DBManager::SanctionInfo> l_active = l_manager.sanctionsFor("1234", l_now);
+    QList<DBManager::SanctionInfo> l_active = l_manager.sanctionsFor("1234", l_now).value();
     QCOMPARE(l_active.size(), 1);
     QCOMPARE(l_active.first().sanction, QStringLiteral("muted"));
     QCOMPARE(l_active.first().expires, l_now + 600);
 
     // Storing the same pair again replaces instead of stacking.
     l_manager.upsertSanction({"1234", "muted", "another moderator", l_now, l_now + 1200});
-    l_active = l_manager.sanctionsFor("1234", l_now);
+    l_active = l_manager.sanctionsFor("1234", l_now).value();
     QCOMPARE(l_active.size(), 1);
     QCOMPARE(l_active.first().expires, l_now + 1200);
     QCOMPARE(l_active.first().moderator, QStringLiteral("another moderator"));
@@ -155,7 +156,7 @@ void tst_DBManager::sanctionsStoreAndExpire()
     QCOMPARE(l_manager.allSanctions().size(), 3);
 
     l_manager.removeSanction("1234", "muted");
-    QCOMPARE(l_manager.sanctionsFor("1234", l_now).size(), 0);
+    QCOMPARE(l_manager.sanctionsFor("1234", l_now)->size(), 0);
     QCOMPARE(l_manager.allSanctions().size(), 2);
 }
 
@@ -171,8 +172,8 @@ void tst_DBManager::untimedSanctionsHoldUntilLifted()
     // An untimed sanction stores -1 and stays in force at any moment,
     // however far in the future the check runs.
     l_manager.upsertSanction({"1234", "muted", "moderator", l_now, -1});
-    QCOMPARE(l_manager.sanctionsFor("1234", l_now).size(), 1);
-    QCOMPARE(l_manager.sanctionsFor("1234", l_now + 1000000).size(), 1);
+    QCOMPARE(l_manager.sanctionsFor("1234", l_now)->size(), 1);
+    QCOMPARE(l_manager.sanctionsFor("1234", l_now + 1000000)->size(), 1);
 
     // The payload column survives the round trip - the charcurse list.
     l_manager.upsertSanction({"1234", "charcurse", "moderator", l_now, -1, "", "Phoenix,Edgeworth"});
@@ -201,18 +202,18 @@ void tst_DBManager::sanctionsMatchByHwid()
     l_manager.upsertSanction({"5678", "gimped", "moderator", l_now, -1, "HW-B"});
 
     // A new IP (fresh IPID) with the sanctioned hardware still matches.
-    QList<DBManager::SanctionInfo> l_matched = l_manager.sanctionsForIdentity("9999", "HW-A", l_now);
+    QList<DBManager::SanctionInfo> l_matched = l_manager.sanctionsForIdentity("9999", "HW-A", l_now).value();
     QCOMPARE(l_matched.size(), 1);
     QCOMPARE(l_matched.first().sanction, QStringLiteral("muted"));
 
     // Matching by both identifiers returns the row once, not twice.
-    QCOMPARE(l_manager.sanctionsForIdentity("1234", "HW-A", l_now).size(), 1);
+    QCOMPARE(l_manager.sanctionsForIdentity("1234", "HW-A", l_now)->size(), 1);
 
     // No hardware id known yet falls back to the IPID check, and an
     // empty stored HWID never matches anybody by hardware.
-    QCOMPARE(l_manager.sanctionsForIdentity("1234", "", l_now).size(), 1);
+    QCOMPARE(l_manager.sanctionsForIdentity("1234", "", l_now)->size(), 1);
     l_manager.upsertSanction({"aaaa", "shaken", "moderator", l_now, -1, ""});
-    QCOMPARE(l_manager.sanctionsForIdentity("bbbb", "HW-C", l_now).size(), 0);
+    QCOMPARE(l_manager.sanctionsForIdentity("bbbb", "HW-C", l_now)->size(), 0);
 }
 
 void tst_DBManager::oldSanctionTablesGainTheNewColumns()
@@ -240,7 +241,25 @@ void tst_DBManager::oldSanctionTablesGainTheNewColumns()
     QCOMPARE(l_old_row->hwid, QString());
     QCOMPARE(l_old_row->data, QString());
     l_manager.upsertSanction({"5678", "charcurse", "moderator", l_now, -1, "HW-A", "Phoenix"});
-    QCOMPARE(l_manager.sanctionsForIdentity("0000", "HW-A", l_now).size(), 1);
+    QCOMPARE(l_manager.sanctionsForIdentity("0000", "HW-A", l_now)->size(), 1);
+}
+
+void tst_DBManager::sanctionLookupsFailClosed()
+{
+    QSqlDatabase l_database = QSqlDatabase::addDatabase("QSQLITE", "test_db_sanctions_fail_closed");
+    l_database.setDatabaseName(":memory:");
+    QVERIFY(l_database.open());
+    DBManager l_manager(l_database);
+
+    // A failed lookup must not read as "no sanctions": that would let a
+    // muted person in unmuted.
+    QSqlQuery l_break(l_database);
+    QVERIFY(l_break.exec("DROP TABLE sanctions"));
+
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("sanction lookup failed")));
+    QVERIFY(!l_manager.sanctionsFor("1234", 0).has_value());
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("sanction lookup failed")));
+    QVERIFY(!l_manager.sanctionsForIdentity("1234", "HW-A", 0).has_value());
 }
 
 void tst_DBManager::failedMigrationStopsTheChain()

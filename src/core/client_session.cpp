@@ -788,8 +788,9 @@ void ClientSession::setHwid(const QString &f_hwid)
     session_hwid = f_hwid;
     // A sanction stored against this hardware id only becomes findable
     // now; the IPID pass at connect ran before the client announced it.
-    if (m_server) {
-        m_server->applyStoredSanctions(this);
+    if (m_server && !m_server->applyStoredSanctions(this)) {
+        sendPacket("BD", {ServerContext::storedSanctionsUnreadable()});
+        closeConnection();
     }
 }
 

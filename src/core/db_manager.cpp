@@ -507,17 +507,19 @@ static QList<DBManager::SanctionInfo> readSanctions(QSqlQuery &query)
     return sanctions;
 }
 
-QList<DBManager::SanctionInfo> DBManager::sanctionsFor(const QString &f_ipid, qint64 f_now)
+std::optional<QList<DBManager::SanctionInfo>> DBManager::sanctionsFor(const QString &f_ipid, qint64 f_now)
 {
     QSqlQuery query(db);
     query.prepare("SELECT IPID, SANCTION, MODERATOR, ISSUED, EXPIRES, HWID, DATA FROM sanctions WHERE IPID = ? AND (EXPIRES < 0 OR EXPIRES > ?)");
     query.addBindValue(f_ipid);
     query.addBindValue(f_now);
-    execLogged(query, "sanction lookup");
+    if (!execLogged(query, "sanction lookup")) {
+        return std::nullopt;
+    }
     return readSanctions(query);
 }
 
-QList<DBManager::SanctionInfo> DBManager::sanctionsForIdentity(const QString &f_ipid, const QString &f_hwid, qint64 f_now)
+std::optional<QList<DBManager::SanctionInfo>> DBManager::sanctionsForIdentity(const QString &f_ipid, const QString &f_hwid, qint64 f_now)
 {
     if (f_hwid.isEmpty()) {
         return sanctionsFor(f_ipid, f_now);
@@ -527,7 +529,9 @@ QList<DBManager::SanctionInfo> DBManager::sanctionsForIdentity(const QString &f_
     query.addBindValue(f_ipid);
     query.addBindValue(f_hwid);
     query.addBindValue(f_now);
-    execLogged(query, "sanction lookup");
+    if (!execLogged(query, "sanction lookup")) {
+        return std::nullopt;
+    }
     return readSanctions(query);
 }
 

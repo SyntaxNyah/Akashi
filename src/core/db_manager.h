@@ -86,15 +86,17 @@ class AKASHI_CORE_EXPORT DBManager : public QObject
     void removeSanction(const QString &f_ipid, const QString &f_sanction);
 
     /**
-     * @brief The sanctions still in force for an IPID at the given moment.
+     * @brief The sanctions still in force for an IPID at the given moment,
+     * or nothing when the lookup failed - never an empty list in its place.
      */
-    QList<SanctionInfo> sanctionsFor(const QString &f_ipid, qint64 f_now);
+    std::optional<QList<SanctionInfo>> sanctionsFor(const QString &f_ipid, qint64 f_now);
 
     /**
      * @brief The sanctions still in force for a person known by IPID or
      * HWID - the join-time check, so neither identifier shakes one off.
+     * Nothing when the lookup failed.
      */
-    QList<SanctionInfo> sanctionsForIdentity(const QString &f_ipid, const QString &f_hwid, qint64 f_now);
+    std::optional<QList<SanctionInfo>> sanctionsForIdentity(const QString &f_ipid, const QString &f_hwid, qint64 f_now);
 
     /**
      * @brief The stored row for one sanction, if any.
