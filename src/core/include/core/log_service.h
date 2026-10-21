@@ -54,6 +54,7 @@ class AKASHI_CORE_EXPORT LogService : public QObject, public IService
   private:
     void stopWorker();
     void workerLoop();
+    void disposeRetired();
 
     QString applyTemplate(const QString &f_tmpl, const LogEvent &f_event) const;
     void loadTemplates();
@@ -80,6 +81,12 @@ class AKASHI_CORE_EXPORT LogService : public QObject, public IService
     // drop, so one that opened a thread-affine resource (a SQL connection) is
     // destroyed on the same thread it was created on rather than on the caller.
     QList<std::shared_ptr<ILogWriter>> m_pending_disposal;
+    // unregisterAll waits until the worker has dropped what it retired, so
+    // a plugin's writer is gone before its library unloads. Each call takes
+    // a ticket; the worker reports the last ticket it disposed of.
+    quint64 m_retire_requested = 0;
+    quint64 m_retire_done = 0;
+    QWaitCondition m_retired;
 
     QThread *m_worker = nullptr;
     std::atomic<bool> m_stop{false};

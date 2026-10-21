@@ -6,6 +6,11 @@
 #include <QRegularExpression>
 #include <QSemaphore>
 #include <QTest>
+#include <QThread>
+
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 namespace {
 
@@ -54,6 +59,7 @@ class tst_LogService : public QObject
     void writerFormatsOnTheWorkerThread();
     void multipleWritersReceive();
     void unregisterByOwner();
+    void unregisterWaitsUntilTheWorkerDropsTheWriter();
     void unregisterUnknownOwnerKeepsWriters();
     void sameWriterIdRegisteredTwiceIsRefused();
     void formatMissingFieldsEmpty();
@@ -368,6 +374,65 @@ void tst_LogService::unregisterByOwner()
     QVERIFY(l_sem.tryAcquire(1, 5000));
     QCOMPARE(l_kept->received.size(), 1);
     QCOMPARE(l_removed->received.size(), 0);
+}
+
+void tst_LogService::unregisterWaitsUntilTheWorkerDropsTheWriter()
+{
+    // A writer still busy on the worker thread when its owner unregisters.
+    // The owner's library may unload right after, so the writer must be
+    // gone, destroyed on the worker, by the time unregisterAll returns.
+    class BusyWriter : public akashi::ILogWriter
+    {
+      public:
+        BusyWriter(QSemaphore &f_entered, QSemaphore &f_release, std::atomic<bool> &f_destroyed, std::atomic<bool> &f_on_worker) :
+            entered(f_entered),
+            release(f_release),
+            destroyed(f_destroyed),
+            on_worker(f_on_worker)
+        {}
+        ~BusyWriter() override
+        {
+            on_worker = QThread::currentThread() != QCoreApplication::instance()->thread();
+            destroyed = true;
+        }
+        QString writerId() const override { return QStringLiteral("busy"); }
+        void write(const akashi::LogEvent &) override
+        {
+            entered.release();
+            release.acquire();
+        }
+
+        QSemaphore &entered;
+        QSemaphore &release;
+        std::atomic<bool> &destroyed;
+        std::atomic<bool> &on_worker;
+    };
+
+    akashi::LogService l_service(nullptr);
+    QSemaphore l_entered;
+    QSemaphore l_release;
+    std::atomic<bool> l_destroyed{false};
+    std::atomic<bool> l_on_worker{false};
+    auto l_writer = std::make_shared<BusyWriter>(l_entered, l_release, l_destroyed, l_on_worker);
+    l_service.registerWriter(l_writer, QStringLiteral("plugin-a"));
+    l_writer.reset();
+
+    akashi::LogEvent l_event;
+    l_event.type = akashi::log_type::IC;
+    l_service.log(l_event);
+    QVERIFY(l_entered.tryAcquire(1, 5000));
+
+    // Let the write finish a little after unregisterAll has started waiting.
+    std::thread l_releaser([&l_release]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        l_release.release();
+    });
+    l_service.unregisterAll(QStringLiteral("plugin-a"));
+    const bool l_gone = l_destroyed;
+    l_releaser.join();
+
+    QVERIFY(l_gone);
+    QVERIFY(l_on_worker);
 }
 
 void tst_LogService::unregisterUnknownOwnerKeepsWriters()

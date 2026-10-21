@@ -183,23 +183,36 @@ void LogService::registerWriter(std::shared_ptr<ILogWriter> f_writer, const QStr
 void LogService::unregisterAll(const QString &f_owner_id)
 {
     AKASHI_ASSERT_THREAD_AFFINITY();
-    {
-        QMutexLocker l_lock(&m_mutex);
-        // Hand each retired writer to the worker for disposal instead of
-        // dropping it here: the writer may hold a resource affine to the worker
-        // thread, so its destructor has to run there. The caller should release
-        // its own reference before this call so the worker holds the last one.
-        for (auto l_it = m_writers.begin(); l_it != m_writers.end();) {
-            if (l_it->owner == f_owner_id) {
-                m_pending_disposal.append(std::move(l_it->writer));
-                l_it = m_writers.erase(l_it);
-            }
-            else {
-                ++l_it;
-            }
+    QList<std::shared_ptr<ILogWriter>> l_retired;
+    QMutexLocker l_lock(&m_mutex);
+    for (auto l_it = m_writers.begin(); l_it != m_writers.end();) {
+        if (l_it->owner == f_owner_id) {
+            l_retired.append(std::move(l_it->writer));
+            l_it = m_writers.erase(l_it);
+        }
+        else {
+            ++l_it;
         }
     }
+    if (l_retired.isEmpty()) {
+        return;
+    }
+    if (!m_worker) {
+        // No worker ever touched them; they go with l_retired, after the lock.
+        return;
+    }
+
+    // Hand each retired writer to the worker for disposal instead of
+    // dropping it here: the writer may hold a resource affine to the worker
+    // thread, so its destructor has to run there. The caller should release
+    // its own reference before this call so the worker holds the last one.
+    // Then wait for it: the owner's code may leave memory right after.
+    m_pending_disposal += std::move(l_retired);
+    const quint64 l_ticket = ++m_retire_requested;
     m_condition.wakeOne();
+    while (m_retire_done < l_ticket) {
+        m_retired.wait(&m_mutex);
+    }
 }
 
 void LogService::registerTemplate(const QString &f_type, const QString &f_tmpl)
@@ -251,7 +264,7 @@ void LogService::workerLoop()
         QList<WriterEntry> l_writers;
         {
             QMutexLocker l_lock(&m_mutex);
-            if (m_queue.isEmpty() && !m_stop.load()) {
+            if (m_queue.isEmpty() && m_pending_disposal.isEmpty() && !m_stop.load()) {
                 m_condition.wait(&m_mutex);
             }
             l_batch.swap(m_queue);
@@ -272,34 +285,46 @@ void LogService::workerLoop()
                 l_entry.writer->maintenance();
             }
         }
+        // This batch's copy may still hold a writer retired meanwhile.
+        l_writers.clear();
 
-        // Drop retired writers here, on the worker thread, so a thread-affine
-        // resource is torn down on the thread that created it.
-        QList<std::shared_ptr<ILogWriter>> l_disposal;
-        {
-            QMutexLocker l_lock(&m_mutex);
-            l_disposal.swap(m_pending_disposal);
-        }
-        l_disposal.clear();
+        disposeRetired();
     }
 
     QQueue<LogEvent> l_remaining;
     QList<WriterEntry> l_writers;
-    QList<std::shared_ptr<ILogWriter>> l_final_disposal;
     {
         QMutexLocker l_lock(&m_mutex);
         l_remaining.swap(m_queue);
         l_writers = m_writers;
-        l_final_disposal.swap(m_pending_disposal);
     }
     for (const auto &l_event : l_remaining) {
         for (const auto &l_entry : l_writers) {
             l_entry.writer->write(l_event);
         }
     }
+    l_writers.clear();
     // Anything retired after the last loop iteration still gets disposed here,
     // before the worker thread exits.
-    l_final_disposal.clear();
+    disposeRetired();
+}
+
+void LogService::disposeRetired()
+{
+    // Drop retired writers here, on the worker thread, so a thread-affine
+    // resource is torn down on the thread that created it, then tell the
+    // waiting unregisterAll they are gone.
+    QList<std::shared_ptr<ILogWriter>> l_disposal;
+    quint64 l_ticket = 0;
+    {
+        QMutexLocker l_lock(&m_mutex);
+        l_disposal.swap(m_pending_disposal);
+        l_ticket = m_retire_requested;
+    }
+    l_disposal.clear();
+    QMutexLocker l_lock(&m_mutex);
+    m_retire_done = l_ticket;
+    m_retired.wakeAll();
 }
 
 QString LogService::applyTemplate(const QString &f_tmpl, const LogEvent &f_event) const
