@@ -27,6 +27,14 @@ class tst_CommandRegistry : public QObject
     void containsCheck();
     void commandNamesList();
 
+    void registerRefusesATakenSlot();
+    void replaceTakesOverAndDropsThePrevious();
+    void replaceKeepsTheOperatorsAliases();
+    void replaceRefusesAnAliasIntoAnotherSlot();
+    void vacateEmptiesTheSlot();
+    void unloadLeavesATakenSlotEmpty();
+    void unloadOfAPluginsOwnCommandIsQuiet();
+
     void aclRoleStringCanPerform();
     void aclRoleSuperWildcard();
     void aclRoleEmptyIsNone();
@@ -44,6 +52,9 @@ class tst_CommandRegistry : public QObject
 
     void variantMatchPicksByArgCount();
     void registerCommandValidatesVariants();
+
+  private:
+    static QString dispatchedDescription(const akashi::CommandRegistry &f_registry, const QString &f_name);
 };
 
 // A two-form command like /listperms: a free self form and a gated
@@ -75,8 +86,152 @@ void tst_CommandRegistry::registerAndLookup()
         QFAIL("spec not found");
     }
 
-    auto l_handler = l_registry.handler("test");
-    QVERIFY(l_handler);
+    // Only the dispatcher (and this friend test) can reach the handler.
+    const auto l_resolved = l_registry.lookup("test");
+    QVERIFY(l_resolved.has_value());
+    QVERIFY(l_resolved->handler);
+}
+
+static akashi::CommandSpec simpleSpec(const QString &f_name, const QStringList &f_aliases = {})
+{
+    return akashi::CommandSpec{f_name, f_aliases, {}, 0, {}, {}};
+}
+
+// Which definition the dispatcher would run for the name, told apart by
+// its description; empty when nothing would run.
+QString tst_CommandRegistry::dispatchedDescription(const akashi::CommandRegistry &f_registry, const QString &f_name)
+{
+    const auto l_resolved = f_registry.lookup(f_name);
+    if (!l_resolved || !l_resolved->handler)
+        return {};
+    return l_resolved->spec.description;
+}
+
+void tst_CommandRegistry::registerRefusesATakenSlot()
+{
+    akashi::CommandRegistry l_registry;
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll"), {QStringLiteral("dice")}), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+
+    // The name, or an alias of it, is a take-over: that is replace().
+    QVERIFY(!l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+    QVERIFY(!l_registry.registerCommand(simpleSpec(QStringLiteral("dice")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+    QCOMPARE(l_registry.ownerOf(QStringLiteral("roll")), QStringLiteral("core"));
+}
+
+void tst_CommandRegistry::replaceTakesOverAndDropsThePrevious()
+{
+    akashi::CommandRegistry l_registry;
+    akashi::CommandSpec l_core = simpleSpec(QStringLiteral("roll"), {QStringLiteral("dice")});
+    l_core.description = QStringLiteral("core roll");
+    QVERIFY(l_registry.registerCommand(l_core, [](akashi::CommandContext &) {}, QStringLiteral("core")));
+
+    akashi::CommandSpec l_plugin = simpleSpec(QStringLiteral("roll"), {QStringLiteral("rr")});
+    l_plugin.description = QStringLiteral("plugin roll");
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("dice-plus.*replaced the core command /roll"));
+    QVERIFY(l_registry.replace(l_plugin, [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+
+    // The plugin's definition answers now, and says whose it replaced.
+    QCOMPARE(dispatchedDescription(l_registry, QStringLiteral("roll")), QStringLiteral("plugin roll"));
+    QCOMPARE(l_registry.ownerOf(QStringLiteral("roll")), QStringLiteral("dice-plus"));
+    QCOMPARE(l_registry.replacedOwnerOf(QStringLiteral("roll")), QStringLiteral("core"));
+    // Core's own alias left with core's definition; the plugin's arrived.
+    QVERIFY(!l_registry.contains(QStringLiteral("dice")));
+    QVERIFY(l_registry.contains(QStringLiteral("rr")));
+
+    // Last wins: a later replace takes it again, quietly between plugins.
+    akashi::CommandSpec l_later = simpleSpec(QStringLiteral("roll"));
+    l_later.description = QStringLiteral("later roll");
+    QVERIFY(l_registry.replace(l_later, [](akashi::CommandContext &) {}, QStringLiteral("dice-pro")));
+    QCOMPARE(dispatchedDescription(l_registry, QStringLiteral("roll")), QStringLiteral("later roll"));
+    QCOMPARE(l_registry.replacedOwnerOf(QStringLiteral("roll")), QStringLiteral("dice-plus"));
+    QVERIFY(!l_registry.contains(QStringLiteral("rr")));
+}
+
+void tst_CommandRegistry::replaceKeepsTheOperatorsAliases()
+{
+    akashi::CommandRegistry l_registry;
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+
+    QTemporaryDir l_dir;
+    QVERIFY(l_dir.isValid());
+    const QString l_path = l_dir.filePath(QStringLiteral("ext.json"));
+    QFile l_file(l_path);
+    QVERIFY(l_file.open(QIODevice::WriteOnly));
+    l_file.write(R"({"roll": {"aliases": "r"}})");
+    l_file.close();
+    l_registry.applyExtensions(l_path);
+
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("replaced the core command /roll"));
+    QVERIFY(l_registry.replace(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+
+    // The operator's alias belongs to the slot, so it reaches the new occupant.
+    QVERIFY(l_registry.contains(QStringLiteral("r")));
+    QCOMPARE(l_registry.spec(QStringLiteral("r"))->name, QStringLiteral("roll"));
+    QVERIFY(l_registry.spec(QStringLiteral("roll"))->aliases.contains(QStringLiteral("r")));
+}
+
+void tst_CommandRegistry::replaceRefusesAnAliasIntoAnotherSlot()
+{
+    akashi::CommandRegistry l_registry;
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("kick"), {QStringLiteral("k")}), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+
+    // One replace may not take a second command through an alias, nor
+    // replace a command by naming another's alias.
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("could not replace /roll"));
+    QVERIFY(!l_registry.replace(simpleSpec(QStringLiteral("roll"), {QStringLiteral("kick")}), [](akashi::CommandContext &) {}, QStringLiteral("p")));
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("could not replace /k"));
+    QVERIFY(!l_registry.replace(simpleSpec(QStringLiteral("k")), [](akashi::CommandContext &) {}, QStringLiteral("p")));
+    QCOMPARE(l_registry.ownerOf(QStringLiteral("roll")), QStringLiteral("core"));
+    QCOMPARE(l_registry.ownerOf(QStringLiteral("kick")), QStringLiteral("core"));
+}
+
+void tst_CommandRegistry::vacateEmptiesTheSlot()
+{
+    akashi::CommandRegistry l_registry;
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("8ball"), {QStringLiteral("eightball")}), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("no-fun vacated /8ball"));
+    QVERIFY(l_registry.vacate(QStringLiteral("8ball"), QStringLiteral("no-fun")));
+
+    QVERIFY(!l_registry.contains(QStringLiteral("8ball")));
+    QVERIFY(!l_registry.contains(QStringLiteral("eightball")));
+    QVERIFY(!l_registry.lookup(QStringLiteral("8ball")));
+    QVERIFY(!l_registry.commandNames().contains(QStringLiteral("8ball")));
+    QCOMPARE(l_registry.vacatedSlots().value(QStringLiteral("8ball")), QStringLiteral("no-fun"));
+    // An empty slot cannot be emptied again.
+    QVERIFY(!l_registry.vacate(QStringLiteral("8ball"), QStringLiteral("no-fun")));
+
+    // It stays empty until something registers it.
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("8ball")), [](akashi::CommandContext &) {}, QStringLiteral("fortune")));
+    QCOMPARE(l_registry.ownerOf(QStringLiteral("8ball")), QStringLiteral("fortune"));
+    QVERIFY(l_registry.vacatedSlots().isEmpty());
+}
+
+void tst_CommandRegistry::unloadLeavesATakenSlotEmpty()
+{
+    akashi::CommandRegistry l_registry;
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("core")));
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("replaced the core command /roll"));
+    QVERIFY(l_registry.replace(simpleSpec(QStringLiteral("roll")), [](akashi::CommandContext &) {}, QStringLiteral("dice-plus")));
+
+    // The plugin unloads: nothing is restored, and the hole is reported.
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression("dice-plus.*left /roll empty"));
+    l_registry.unregisterAll(QStringLiteral("dice-plus"));
+    QVERIFY(!l_registry.contains(QStringLiteral("roll")));
+    QCOMPARE(l_registry.vacatedSlots().value(QStringLiteral("roll")), QStringLiteral("dice-plus"));
+}
+
+void tst_CommandRegistry::unloadOfAPluginsOwnCommandIsQuiet()
+{
+    akashi::CommandRegistry l_registry;
+    QVERIFY(l_registry.registerCommand(simpleSpec(QStringLiteral("slowmode")), [](akashi::CommandContext &) {}, QStringLiteral("slowmode")));
+
+    // Its own command leaving with it is ordinary: no warning, no hole.
+    QTest::failOnWarning(QRegularExpression("left /slowmode empty"));
+    l_registry.unregisterAll(QStringLiteral("slowmode"));
+    QVERIFY(!l_registry.contains(QStringLiteral("slowmode")));
+    QVERIFY(l_registry.vacatedSlots().isEmpty());
 }
 
 void tst_CommandRegistry::lookupByAlias()

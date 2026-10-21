@@ -1198,6 +1198,25 @@ void ServerContext::printCompiledOffers() const
     const QStringList l_rows = l_sorted_rows(m_permission_registry->grants());
     for (const QString &l_row : l_rows)
         l_out << l_row << "\n";
+
+    // Commands are core's unless this says otherwise: every take-over and
+    // every slot left empty, so a plugin's effect on commands is visible.
+    l_out << "Commands not provided by core:\n";
+    QStringList l_command_rows;
+    const QStringList l_names = m_command_registry->commandNames();
+    for (const QString &l_name : l_names) {
+        const QString l_owner = m_command_registry->ownerOf(l_name);
+        if (l_owner == QStringLiteral("core"))
+            continue;
+        const QString l_replaced = m_command_registry->replacedOwnerOf(l_name);
+        l_command_rows << "  /" + l_name + " -> " + l_owner + (l_replaced.isEmpty() ? QString() : " (replaces " + l_replaced + ")");
+    }
+    const QHash<QString, QString> l_vacated = m_command_registry->vacatedSlots();
+    for (auto it = l_vacated.cbegin(); it != l_vacated.cend(); ++it)
+        l_command_rows << "  /" + it.key() + " -> empty (left by " + it.value() + ")";
+    l_command_rows.sort();
+    for (const QString &l_row : std::as_const(l_command_rows))
+        l_out << l_row << "\n";
     l_out.flush();
 }
 

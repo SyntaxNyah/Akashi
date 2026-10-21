@@ -26,29 +26,49 @@ ServiceVersion CommandRegistry::serviceVersion() const
     return {1, 0, 0};
 }
 
-bool CommandRegistry::registerCommand(const CommandSpec &f_spec, CommandHandler f_handler,
-                                      const QString &f_owner_id)
+bool CommandRegistry::validSpec(const CommandSpec &f_spec) const
 {
-    AKASHI_ASSERT_OWNER_THREAD();
-    const QString l_key = f_spec.name.toLower();
-    if (m_entries.contains(l_key) || m_aliases.contains(l_key)) {
+    if (f_spec.name.isEmpty()) {
         return false;
     }
-
-    for (const QString &l_alias : f_spec.aliases) {
-        const QString l_alias_key = l_alias.toLower();
-        if (m_entries.contains(l_alias_key) || m_aliases.contains(l_alias_key)) {
-            return false;
-        }
-    }
-
     for (const CommandVariant &l_variant : f_spec.variants) {
         if (l_variant.id.isEmpty() || !l_variant.handler) {
             return false;
         }
     }
+    return true;
+}
 
-    m_entries.insert(l_key, Entry{f_spec, std::move(f_handler), f_owner_id});
+bool CommandRegistry::aliasesCollide(const CommandSpec &f_spec, const QString &f_slot) const
+{
+    for (const QString &l_alias : f_spec.aliases) {
+        const QString l_alias_key = l_alias.toLower();
+        if (l_alias_key == f_slot) {
+            continue;
+        }
+        if (m_entries.contains(l_alias_key) || m_vacated.contains(l_alias_key)) {
+            return true;
+        }
+        const auto l_target = m_aliases.constFind(l_alias_key);
+        if (l_target != m_aliases.constEnd() && *l_target != f_slot) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CommandRegistry::registerCommand(const CommandSpec &f_spec, CommandHandler f_handler,
+                                      const QString &f_owner_id)
+{
+    AKASHI_ASSERT_OWNER_THREAD();
+    const QString l_key = f_spec.name.toLower();
+    // An empty slot only: a name held by a command, or by an alias of
+    // one, is a take-over, and that is replace().
+    if (!validSpec(f_spec) || m_entries.contains(l_key) || m_aliases.contains(l_key) || aliasesCollide(f_spec, l_key)) {
+        return false;
+    }
+    m_vacated.remove(l_key);
+    m_entries.insert(l_key, Entry{f_spec, std::move(f_handler), f_owner_id, {}});
     for (const QString &l_alias : f_spec.aliases) {
         m_aliases.insert(l_alias.toLower(), l_key);
     }
@@ -63,25 +83,110 @@ bool CommandRegistry::registerCommand(const CommandSpec &f_spec, const QString &
     return registerCommand(f_spec, CommandHandler(), f_owner_id);
 }
 
+bool CommandRegistry::replace(const CommandSpec &f_spec, CommandHandler f_handler, const QString &f_owner_id)
+{
+    AKASHI_ASSERT_OWNER_THREAD();
+    const QString l_key = f_spec.name.toLower();
+    // The name may belong to anyone; an alias may not reach into another
+    // slot, or one replace would take two commands.
+    if (!validSpec(f_spec) || aliasesCollide(f_spec, l_key)) {
+        qCWarning(akashiCommands).noquote() << QStringLiteral("%1 could not replace /%2: the definition is malformed or an alias names another command").arg(f_owner_id, l_key);
+        return false;
+    }
+    const auto l_alias_owner = m_aliases.constFind(l_key);
+    if (l_alias_owner != m_aliases.constEnd() && *l_alias_owner != l_key) {
+        qCWarning(akashiCommands).noquote() << QStringLiteral("%1 could not replace /%2: it is an alias of /%3").arg(f_owner_id, l_key, *l_alias_owner);
+        return false;
+    }
+
+    QString l_previous;
+    if (const auto it = m_entries.constFind(l_key); it != m_entries.constEnd()) {
+        l_previous = it->owner_id;
+        dropOccupant(l_key);
+    }
+    m_vacated.remove(l_key);
+    m_entries.insert(l_key, Entry{f_spec, std::move(f_handler), f_owner_id, l_previous == f_owner_id ? QString() : l_previous});
+    for (const QString &l_alias : f_spec.aliases) {
+        m_aliases.insert(l_alias.toLower(), l_key);
+    }
+
+    if (l_previous == QStringLiteral("core") && f_owner_id != l_previous) {
+        qCWarning(akashiCommands).noquote() << QStringLiteral("%1 replaced the core command /%2").arg(f_owner_id, l_key);
+    }
+    else if (!l_previous.isEmpty() && f_owner_id != l_previous) {
+        qCInfo(akashiCommands).noquote() << QStringLiteral("%1 replaced /%2 from %3").arg(f_owner_id, l_key, l_previous);
+    }
+    return true;
+}
+
+bool CommandRegistry::replace(const CommandSpec &f_spec, const QString &f_owner_id)
+{
+    if (f_spec.variants.isEmpty()) {
+        return false;
+    }
+    return replace(f_spec, CommandHandler(), f_owner_id);
+}
+
+void CommandRegistry::dropOccupant(const QString &f_slot)
+{
+    const auto it = m_entries.constFind(f_slot);
+    if (it == m_entries.constEnd()) {
+        return;
+    }
+    // The occupant's own aliases leave with it; the operator's stay with
+    // the slot for whoever fills it next.
+    for (const QString &l_alias : it->spec.aliases) {
+        const QString l_alias_key = l_alias.toLower();
+        if (!m_slot_aliases.contains(l_alias_key)) {
+            m_aliases.remove(l_alias_key);
+        }
+    }
+    m_entries.remove(f_slot);
+}
+
+bool CommandRegistry::vacate(const QString &f_command_name, const QString &f_owner_id)
+{
+    AKASHI_ASSERT_OWNER_THREAD();
+    const QString l_key = resolve(f_command_name);
+    if (!m_entries.contains(l_key)) {
+        return false;
+    }
+    const QString l_previous = m_entries.value(l_key).owner_id;
+    dropOccupant(l_key);
+    m_vacated.insert(l_key, f_owner_id);
+    qCWarning(akashiCommands).noquote() << QStringLiteral("%1 vacated /%2 (held by %3); it stays empty until something registers it").arg(f_owner_id, l_key, l_previous);
+    return true;
+}
+
 void CommandRegistry::unregisterAll(const QString &f_owner_id)
 {
     AKASHI_ASSERT_OWNER_THREAD();
-    m_entries.removeIf([this, &f_owner_id](std::pair<const QString &, Entry &> f_item) {
-        const Entry &l_entry = f_item.second;
-        if (l_entry.owner_id != f_owner_id) {
-            return false;
+    QStringList l_owned;
+    for (auto it = m_entries.cbegin(); it != m_entries.cend(); ++it) {
+        if (it->owner_id == f_owner_id) {
+            l_owned << it.key();
         }
-        for (const QString &l_alias : l_entry.spec.aliases) {
-            m_aliases.remove(l_alias.toLower());
+    }
+    for (const QString &l_slot : std::as_const(l_owned)) {
+        const QString l_replaced = m_entries.value(l_slot).replaced_owner;
+        dropOccupant(l_slot);
+        // A command the owner took from someone else leaves a hole where
+        // a command used to be: that is worth a warning. Its own command
+        // leaving with it is ordinary.
+        if (!l_replaced.isEmpty()) {
+            m_vacated.insert(l_slot, f_owner_id);
+            qCWarning(akashiCommands).noquote() << QStringLiteral("%1 left /%2 empty; it had replaced the command from %3, which is not restored").arg(f_owner_id, l_slot, l_replaced);
         }
-        return true;
-    });
+        else {
+            qCInfo(akashiCommands).noquote() << QStringLiteral("/%1 left with %2").arg(l_slot, f_owner_id);
+        }
+    }
 }
 
 QString CommandRegistry::resolve(const QString &f_name) const
 {
     const QString l_key = f_name.toLower();
-    if (m_entries.contains(l_key)) {
+    if (m_entries.contains(l_key) || m_vacated.contains(l_key)) {
         return l_key;
     }
     return m_aliases.value(l_key);
@@ -91,30 +196,45 @@ std::optional<CommandSpec> CommandRegistry::spec(const QString &f_command_name) 
 {
     AKASHI_ASSERT_OWNER_THREAD();
     const QString l_key = resolve(f_command_name);
-    if (auto it = m_entries.constFind(l_key); it != m_entries.constEnd()) {
-        return it->spec;
+    const auto it = m_entries.constFind(l_key);
+    if (it == m_entries.constEnd()) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    CommandSpec l_spec = it->spec;
+    for (auto l_alias = m_slot_aliases.cbegin(); l_alias != m_slot_aliases.cend(); ++l_alias) {
+        if (l_alias.value() == l_key && !l_spec.aliases.contains(l_alias.key(), Qt::CaseInsensitive)) {
+            l_spec.aliases.append(l_alias.key());
+        }
+    }
+    return l_spec;
 }
 
-CommandHandler CommandRegistry::handler(const QString &f_command_name) const
+QString CommandRegistry::ownerOf(const QString &f_command_name) const
 {
     AKASHI_ASSERT_OWNER_THREAD();
-    const QString l_key = resolve(f_command_name);
-    if (auto it = m_entries.constFind(l_key); it != m_entries.constEnd()) {
-        return it->handler;
-    }
-    return {};
+    return m_entries.value(resolve(f_command_name)).owner_id;
+}
+
+QString CommandRegistry::replacedOwnerOf(const QString &f_command_name) const
+{
+    AKASHI_ASSERT_OWNER_THREAD();
+    return m_entries.value(resolve(f_command_name)).replaced_owner;
+}
+
+QHash<QString, QString> CommandRegistry::vacatedSlots() const
+{
+    AKASHI_ASSERT_OWNER_THREAD();
+    return m_vacated;
 }
 
 std::optional<CommandRegistry::Resolved> CommandRegistry::lookup(const QString &f_command_name) const
 {
     AKASHI_ASSERT_OWNER_THREAD();
-    const QString l_key = resolve(f_command_name);
-    if (auto it = m_entries.constFind(l_key); it != m_entries.constEnd()) {
-        return Resolved{it->spec, it->handler};
+    const auto it = m_entries.constFind(resolve(f_command_name));
+    if (it == m_entries.constEnd()) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return Resolved{it->spec, it->handler};
 }
 
 QStringList CommandRegistry::commandNames() const
@@ -126,7 +246,7 @@ QStringList CommandRegistry::commandNames() const
 bool CommandRegistry::contains(const QString &f_command_name) const
 {
     AKASHI_ASSERT_OWNER_THREAD();
-    return !resolve(f_command_name).isEmpty();
+    return m_entries.contains(resolve(f_command_name));
 }
 
 bool CommandRegistry::canUse(const QString &f_command, const std::function<bool(const QString &)> &f_can_perform) const
@@ -177,8 +297,7 @@ void CommandRegistry::applyExtensions(const QString &f_path)
             continue;
         }
 
-        auto l_entry = m_entries.find(l_name);
-        if (l_entry == m_entries.end()) {
+        if (!m_entries.contains(l_name) && !m_vacated.contains(l_name)) {
             qCWarning(akashiCommands) << "command_extensions: unknown command" << l_name;
             continue;
         }
@@ -188,13 +307,16 @@ void CommandRegistry::applyExtensions(const QString &f_path)
             for (const QString &l_alias : l_new_aliases) {
                 const QString l_alias_key = l_alias.toLower();
                 if (resolve(l_alias_key) == l_name) {
+                    // Already this slot's - an operator alias the occupant
+                    // also declares is still kept for the slot.
+                    m_slot_aliases.insert(l_alias_key, l_name);
                     continue;
                 }
-                if (m_entries.contains(l_alias_key) || m_aliases.contains(l_alias_key)) {
+                if (m_entries.contains(l_alias_key) || m_vacated.contains(l_alias_key) || m_aliases.contains(l_alias_key)) {
                     qCWarning(akashiCommands) << "command_extensions:" << l_name << "alias" << l_alias << "collides with an existing command or alias";
                     continue;
                 }
-                l_entry->spec.aliases.append(l_alias_key);
+                m_slot_aliases.insert(l_alias_key, l_name);
                 m_aliases.insert(l_alias_key, l_name);
             }
         }

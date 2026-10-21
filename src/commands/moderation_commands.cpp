@@ -164,6 +164,19 @@ static std::function<bool(const QString &)> callerPermissions(CommandContext &f_
     };
 }
 
+// Who provides a command, when it is not core's own - a plugin that
+// replaced a command changes what it does and needs, so it says so.
+static QString providedBy(CommandRegistry *f_registry, const QString &f_name)
+{
+    const QString l_owner = f_registry->ownerOf(f_name);
+    if (l_owner.isEmpty() || l_owner == QStringLiteral("core"))
+        return {};
+    const QString l_replaced = f_registry->replacedOwnerOf(f_name);
+    if (l_replaced.isEmpty())
+        return "Provided by " + l_owner + ".";
+    return "Provided by " + l_owner + ", in place of " + l_replaced + "'s version.";
+}
+
 // The areas where a command's gate resolves for this caller, capped for
 // readability, with the overflow counted instead of hidden.
 static QString areasWhereUsable(CommandContext &f_context, CommandRegistry *f_registry, const QString &f_name)
@@ -269,6 +282,8 @@ void cmdHelp(CommandContext &f_context)
         }
         if (!l_spec->target_immune_if.isEmpty())
             l_text += "\nCannot target holders of " + l_spec->target_immune_if + ".";
+        if (const QString l_provider = providedBy(l_registry, f_command_name); !l_provider.isEmpty())
+            l_text += "\n" + l_provider;
         return l_text;
     };
 
@@ -438,6 +453,8 @@ void cmdWhy(CommandContext &f_context)
         }
         if (!l_spec->target_immune_if.isEmpty())
             l_lines << "Cannot target holders of " + l_spec->target_immune_if + ".";
+        if (const QString l_provider = providedBy(l_registry, l_query); !l_provider.isEmpty())
+            l_lines << l_provider;
         for (const QString &l_permission : std::as_const(l_permissions))
             l_lines << whyLine(f_context, l_subject, l_permission);
     }
