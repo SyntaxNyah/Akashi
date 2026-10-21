@@ -161,7 +161,10 @@ void cmdListPermsUser(CommandContext &f_context)
 
 void cmdSetPerms(CommandContext &f_context)
 {
-    const QString l_target_acl = f_context.argument(1);
+    // Role ids are upper-case, and the roles handler upper-cases every
+    // lookup - so "super" is the SUPER role. Compare and store that same
+    // canonical spelling, or "super" would slip past the SUPER check below.
+    const QString l_target_acl = f_context.argument(1).toUpper();
     if (!f_context.server()->aclRolesHandler()->roleExists(l_target_acl)) {
         f_context.reply("That role doesn't exist!");
         return;

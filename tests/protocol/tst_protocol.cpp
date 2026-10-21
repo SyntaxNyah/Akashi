@@ -181,6 +181,7 @@ class ProtocolTest : public QObject
     void floorFileRoundTrip();
     void authPacketAuthenticatesAgainstTheActiveSystem();
     void advancedBootCreatesARootAccount();
+    void setpermsCannotGrantSuperInAnyCase();
     void emptyModpassBootGeneratesOne();
     void oocRoundtrip();
     void areaMessageRejectsOutOfRangeAreaId();
@@ -201,6 +202,15 @@ class ProtocolTest : public QObject
     // Takes a character and logs in with the fixture modpass.
     void loginAsModerator(TestClient &client);
     void loginAsModeratorWith(TestClient &client, const QString &modpass);
+    // Restarts the server with username accounts (auth=advanced) and reads
+    // the one-time root password from its boot banner.
+    void rebootWithAccounts(QString *rootPassword);
+    // Handshake and join on a server running username accounts.
+    void joinWithAccounts(TestClient &client);
+    // Logs in through the OOC prompt and waits for the verdict.
+    void loginWithAccount(TestClient &client, const QString &username, const QString &password);
+    // Sends one OOC line and answers everything that came back.
+    QString oocReply(TestClient &client, const QString &line);
     // Sends a pair-carrying IC message on def and answers with the pair
     // field of the sender's own MS echo: the partner's char id when the
     // mutual match held, -1 when nobody pointed back.
@@ -1522,7 +1532,7 @@ void ProtocolTest::authPacketAuthenticatesAgainstTheActiveSystem()
     QVERIFY(!received.contains(QStringLiteral("AUTH#1#%")));
 }
 
-void ProtocolTest::advancedBootCreatesARootAccount()
+void ProtocolTest::rebootWithAccounts(QString *rootPassword)
 {
     // The bootstrap needs auth=advanced BEFORE boot: stop the simple-auth
     // server init() started and rewrite the staged config. The first boot
@@ -1562,11 +1572,13 @@ void ProtocolTest::advancedBootCreatesARootAccount()
             break;
     }
     QVERIFY2(match.hasMatch(), qPrintable("no root banner in the server output:\n" + QString::fromUtf8(output)));
-    const QString rootPassword = match.captured(1);
+    *rootPassword = match.captured(1);
+}
 
+void ProtocolTest::joinWithAccounts(TestClient &client)
+{
     // The advanced boot advertises the username system; performHandshake
     // pins the simple-auth FL bytes, so the handshake runs by hand here.
-    TestClient client;
     QVERIFY2(client.connectTo(m_port), "could not connect to the server");
     QCOMPARE(client.takeNext(), QStringLiteral("decryptor#NOENCRYPT#%"));
     client.send(QStringLiteral("HI#TESTHWID#%"));
@@ -1586,14 +1598,16 @@ void ProtocolTest::advancedBootCreatesARootAccount()
     QVERIFY(client.waitForIdle());
     while (client.pendingCount() > 0)
         client.takeNext();
+}
 
-    // The extracted password logs in over the ordinary OOC prompt: the
-    // bootstrap account works end to end.
+void ProtocolTest::loginWithAccount(TestClient &client, const QString &username, const QString &password)
+{
+    // The ordinary OOC prompt: /login, then "username password".
     client.send(QStringLiteral("CT#Tester#/login#%"));
     client.waitForIdle();
     while (client.pendingCount() > 0)
         client.takeNext();
-    client.send(QStringLiteral("CT#Tester#root %1#%").arg(rootPassword));
+    client.send(QStringLiteral("CT#Tester#%1 %2#%").arg(username, password));
     // The verdict arrives after an off-thread PBKDF2 derivation, which a
     // debug build can stretch well past the usual idle window.
     bool loggedIn = false;
@@ -1606,7 +1620,79 @@ void ProtocolTest::advancedBootCreatesARootAccount()
         seen.append(packet);
         loggedIn |= packet == QStringLiteral("AUTH#1#%");
     }
-    QVERIFY2(loggedIn, qPrintable("no AUTH#1 after the bootstrap login; saw: " + seen.join(" | ")));
+    QVERIFY2(loggedIn, qPrintable("no AUTH#1 after logging in as " + username + "; saw: " + seen.join(" | ")));
+}
+
+QString ProtocolTest::oocReply(TestClient &client, const QString &line)
+{
+    client.send(QStringLiteral("CT#Tester#") + line + QStringLiteral("#%"));
+    client.waitForIdle();
+    QStringList lines;
+    while (client.pendingCount() > 0)
+        lines.append(client.takeNext());
+    return lines.join(QStringLiteral("\n"));
+}
+
+void ProtocolTest::advancedBootCreatesARootAccount()
+{
+    QString rootPassword;
+    rebootWithAccounts(&rootPassword);
+    if (QTest::currentTestFailed())
+        return;
+
+    // The extracted password logs in over the ordinary OOC prompt: the
+    // bootstrap account works end to end.
+    TestClient client;
+    joinWithAccounts(client);
+    if (QTest::currentTestFailed())
+        return;
+    loginWithAccount(client, QStringLiteral("root"), rootPassword);
+}
+
+void ProtocolTest::setpermsCannotGrantSuperInAnyCase()
+{
+    // Role ids are case-insensitive, and /setperms once compared only the
+    // exact spelling "SUPER" against its escalation: a supervisor (who may
+    // modify users, but is not super) could hand out "super" and have it
+    // load as SUPER on the next login.
+    QString rootPassword;
+    rebootWithAccounts(&rootPassword);
+    if (QTest::currentTestFailed())
+        return;
+
+    // Root sets the scene: a supervisor account and a target account. The
+    // fixture's password rules want mixed case, a digit and a symbol.
+    const QString password = QStringLiteral("Abcdefg1!");
+    TestClient root;
+    joinWithAccounts(root);
+    if (QTest::currentTestFailed())
+        return;
+    loginWithAccount(root, QStringLiteral("root"), rootPassword);
+    if (QTest::currentTestFailed())
+        return;
+    QVERIFY(oocReply(root, QStringLiteral("/adduser boss ") + password).contains(QStringLiteral("Created user boss")));
+    QVERIFY(oocReply(root, QStringLiteral("/adduser target ") + password).contains(QStringLiteral("Created user target")));
+    QVERIFY(oocReply(root, QStringLiteral("/setperms boss supervisor")).contains(QStringLiteral("Successfully applied role")));
+
+    TestClient boss;
+    joinWithAccounts(boss);
+    if (QTest::currentTestFailed())
+        return;
+    loginWithAccount(boss, QStringLiteral("boss"), password);
+    if (QTest::currentTestFailed())
+        return;
+
+    // Every spelling of SUPER is refused, not just the upper-case one.
+    for (const QString &spelling : {QStringLiteral("SUPER"), QStringLiteral("super"), QStringLiteral("Super")}) {
+        const QString reply = oocReply(boss, QStringLiteral("/setperms target ") + spelling);
+        QVERIFY2(reply.contains(QStringLiteral("You aren't allowed to set that role!")),
+                 qPrintable(spelling + " was not refused: " + reply));
+        QVERIFY2(!reply.contains(QStringLiteral("Successfully applied")), qPrintable(spelling + ": " + reply));
+    }
+
+    // The supervisor's ordinary power still works, in any case, and is
+    // stored in the canonical spelling.
+    QVERIFY(oocReply(boss, QStringLiteral("/setperms target moderator")).contains(QStringLiteral("Successfully applied role MODERATOR")));
 }
 
 void ProtocolTest::emptyModpassBootGeneratesOne()
