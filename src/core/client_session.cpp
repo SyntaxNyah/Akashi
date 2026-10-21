@@ -1235,7 +1235,17 @@ bool ClientSession::isIcMessageAllowed() const
 bool ClientSession::canActInArea() const
 {
     akashi::Area *l_area = m_server->areaById(areaId());
-    return !(l_area->lockState() == akashi::Area::LockState::Spectatable && !l_area->invited().contains(clientId()) && !canPerform(permission::area_enter));
+    if (l_area->lockState() != akashi::Area::LockState::Spectatable || l_area->invited().contains(clientId())) {
+        return true;
+    }
+    // Staff act through spectate mode because they pass locks. The lock
+    // itself lets everyone into a spectatable area, so its own answer
+    // does not count as passing one.
+    const akashi::Resolution l_entry = explainPermission(permission::area_enter);
+    return l_entry.masked_by.isEmpty() &&
+           std::any_of(l_entry.contributions.cbegin(), l_entry.contributions.cend(), [](const akashi::Contribution &f_contribution) {
+               return f_contribution.kind != akashi::Contribution::Kind::Source || f_contribution.id != QStringLiteral("lock_state");
+           });
 }
 
 bool ClientSession::isImmediateForced() const

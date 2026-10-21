@@ -160,6 +160,7 @@ class ProtocolTest : public QObject
     void joinBurst();
     void preJoinPacketsAreDropped();
     void configRuleBlocksIc();
+    void spectatableAreaSilencesTheUninvited();
     void pairRequestsClearOnCharacterAndAreaChanges();
     void testimonyPlaybackJumpRefreshesTheEvidenceList();
     void forcedPositionSanitizesAndRefreshesTheTarget();
@@ -424,6 +425,39 @@ void ProtocolTest::configRuleBlocksIc()
     }
     QVERIFY(!sawIc);
     QVERIFY(sawBlock);
+}
+
+void ProtocolTest::spectatableAreaSilencesTheUninvited()
+{
+    // A CM puts the Basement into spectate mode: anyone may still walk in,
+    // but only the invited may talk. Those inside when it closes are
+    // invited; a newcomer is not.
+    TestClient cm;
+    joinServer(cm);
+    // The Basement offers CM to nobody, so a moderator takes it.
+    loginAsModerator(cm);
+    QStringList replies;
+    const auto run = [&replies](TestClient &f_client, const QString &f_packet) {
+        f_client.send(f_packet);
+        replies.clear();
+        f_client.waitForIdle();
+        while (f_client.pendingCount() > 0)
+            replies.append(f_client.takeNext());
+    };
+    run(cm, QStringLiteral("CT#Tester#/cm#%"));
+    run(cm, QStringLiteral("CT#Tester#/area_spectate#%"));
+    QVERIFY(!replies.filter(QStringLiteral("now spectatable")).isEmpty());
+
+    TestClient guest;
+    joinServer(guest, 1);
+    run(guest, QStringLiteral("CC#0#2#TESTHWID#%"));
+    run(guest, QStringLiteral("MS#chat#-#Edgeworth#normal#objection#pro#1#0#2#0#0#0#0#0#0#%"));
+    QVERIFY(replies.filter(QStringLiteral("MS#")).isEmpty());
+
+    // An invite lets them speak.
+    run(cm, QStringLiteral("CT#Tester#/invite 1#%"));
+    run(guest, QStringLiteral("MS#chat#-#Edgeworth#normal#objection#pro#1#0#2#0#0#0#0#0#0#%"));
+    QVERIFY(!replies.filter(QStringLiteral("MS#")).isEmpty());
 }
 
 void ProtocolTest::loginAsModerator(TestClient &client)
