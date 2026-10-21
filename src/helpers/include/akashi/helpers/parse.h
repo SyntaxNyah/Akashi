@@ -23,10 +23,18 @@ AKASHI_CORE_EXPORT Result<int> parseInt(const QString &f_text, const QString &f_
 // spelled in f_words, so callers compare against their own constants.
 AKASHI_CORE_EXPORT Result<QString> parseWord(const QString &f_text, const QStringList &f_words, const QString &f_subject);
 
+// The longest duration parseDuration accepts unless told otherwise.
+inline constexpr qint64 c_max_duration_seconds = 100ll * 365 * 24 * 60 * 60;
+
 // A compound duration in seconds, such as "1w2d3h30m". Units are y (365
 // days), w, d, h, m and s, in any order, each a non-negative count; the
-// total must be above zero and at most 100 years.
-AKASHI_CORE_EXPORT Result<qint64> parseDuration(const QString &f_text);
+// total must be above zero and at most f_max_seconds, so a caller's own
+// limit is part of the read rather than a check after it.
+AKASHI_CORE_EXPORT Result<qint64> parseDuration(const QString &f_text, qint64 f_max_seconds = c_max_duration_seconds);
+
+// Seconds written back in the units parseDuration reads, largest first:
+// 5400 is "1h30m". Zero or less is "0s".
+AKASHI_CORE_EXPORT QString formatDuration(qint64 f_seconds);
 
 // One roll in dice notation: f_count dice with f_sides faces each, and a
 // modifier added to every die.

@@ -1,5 +1,7 @@
 #include "akashi/helpers/parse_error.h"
 
+#include "akashi/helpers/parse.h"
+
 namespace akashi::helpers {
 
 QString ParseError::errorString() const
@@ -21,7 +23,7 @@ QString ParseError::errorString() const
     case DurationEmpty:
         return tr("\"%1\" adds up to no time at all. Use a duration like 1h30m or 2d.").arg(input);
     case DurationTooLong:
-        return tr("\"%1\" is longer than 100 years.").arg(input);
+        return tr("\"%1\" is longer than %2.").arg(input, formatDuration(max));
     case NotDiceNotation:
         return tr("\"%1\" is not valid dice notation. Use a form like 2d6 or 1d20+3.").arg(input);
     case TextTooLong:

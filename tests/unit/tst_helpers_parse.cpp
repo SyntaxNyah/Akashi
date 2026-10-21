@@ -25,6 +25,10 @@ class tst_HelpersParse : public QObject
     void parseWord();
     void parseDuration_data();
     void parseDuration();
+    void parseDurationWithLimit_data();
+    void parseDurationWithLimit();
+    void formatDuration_data();
+    void formatDuration();
     void parseDice_data();
     void parseDice();
     void joinFrom_data();
@@ -200,6 +204,63 @@ void tst_HelpersParse::parseDuration()
     verify(akashi::helpers::parseDuration(text), error, value);
 }
 
+void tst_HelpersParse::parseDurationWithLimit_data()
+{
+    QTest::addColumn<QString>("text");
+    QTest::addColumn<qint64>("max");
+    QTest::addColumn<ParseError::Error>("error");
+    QTest::addColumn<qint64>("value");
+
+    // A caller's own limit, as a plugin passes its configured maximum.
+    QTest::newRow("under the limit") << "45m" << qint64(3600) << ParseError::NoError << qint64(2700);
+    QTest::newRow("exactly the limit") << "1h" << qint64(3600) << ParseError::NoError << qint64(3600);
+    QTest::newRow("the limit in other units") << "60m" << qint64(3600) << ParseError::NoError << qint64(3600);
+    QTest::newRow("one second over") << "1h1s" << qint64(3600) << ParseError::DurationTooLong << qint64(0);
+    QTest::newRow("far over") << "5h" << qint64(3600) << ParseError::DurationTooLong << qint64(0);
+    QTest::newRow("shape still checked first") << "5 hours" << qint64(3600) << ParseError::NotADuration << qint64(0);
+}
+
+void tst_HelpersParse::parseDurationWithLimit()
+{
+    QFETCH(QString, text);
+    QFETCH(qint64, max);
+    QFETCH(ParseError::Error, error);
+    QFETCH(qint64, value);
+
+    const Result<qint64> l_result = akashi::helpers::parseDuration(text, max);
+    verify(l_result, error, value);
+    if (error == ParseError::DurationTooLong) {
+        // The limit travels with the refusal, for the message to state.
+        QCOMPARE(l_result.error().max, max);
+    }
+}
+
+void tst_HelpersParse::formatDuration_data()
+{
+    QTest::addColumn<qint64>("seconds");
+    QTest::addColumn<QString>("text");
+
+    QTest::newRow("seconds") << qint64(30) << "30s";
+    QTest::newRow("whole hour") << qint64(3600) << "1h";
+    QTest::newRow("hour and a half") << qint64(5400) << "1h30m";
+    QTest::newRow("every unit") << qint64(31536000 + 604800 + 86400 + 3600 + 60 + 1) << "1y1w1d1h1m1s";
+    QTest::newRow("the default limit") << akashi::helpers::c_max_duration_seconds << "100y";
+    QTest::newRow("zero") << qint64(0) << "0s";
+    QTest::newRow("negative") << qint64(-5) << "0s";
+}
+
+void tst_HelpersParse::formatDuration()
+{
+    QFETCH(qint64, seconds);
+    QFETCH(QString, text);
+
+    QCOMPARE(akashi::helpers::formatDuration(seconds), text);
+    // What it writes, parseDuration reads back to the same seconds.
+    if (seconds > 0) {
+        QCOMPARE(*akashi::helpers::parseDuration(text), seconds);
+    }
+}
+
 void tst_HelpersParse::parseDice_data()
 {
     QTest::addColumn<QString>("text");
@@ -337,7 +398,7 @@ void tst_HelpersParse::errorString_data()
     QTest::newRow("UnknownWord") << l_make(ParseError::UnknownWord, "maybe", "switch", 0, 0, {"on", "off"}) << "\"maybe\" is not a valid switch. Use one of: on, off.";
     QTest::newRow("NotADuration") << l_make(ParseError::NotADuration, "10", "duration") << "\"10\" is not a valid duration. Use a duration like 1h30m or 2d.";
     QTest::newRow("DurationEmpty") << l_make(ParseError::DurationEmpty, "0s", "duration") << "\"0s\" adds up to no time at all. Use a duration like 1h30m or 2d.";
-    QTest::newRow("DurationTooLong") << l_make(ParseError::DurationTooLong, "101y", "duration") << "\"101y\" is longer than 100 years.";
+    QTest::newRow("DurationTooLong") << l_make(ParseError::DurationTooLong, "5h", "duration", 1, 3600) << "\"5h\" is longer than 1h.";
     QTest::newRow("NotDiceNotation") << l_make(ParseError::NotDiceNotation, "6", "dice") << "\"6\" is not valid dice notation. Use a form like 2d6 or 1d20+3.";
     QTest::newRow("TextTooLong") << l_make(ParseError::TextTooLong, "abcd", "reason", 0, 3) << "The reason is too long: 4 characters, at most 3.";
     QTest::newRow("NoSuchClient") << l_make(ParseError::NoSuchClient, "7", "client_id") << "No client with ID 7 is connected.";

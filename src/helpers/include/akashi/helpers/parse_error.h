@@ -37,6 +37,17 @@ struct AKASHI_CORE_EXPORT ParseError
     };
     Q_ENUM(Error)
 
+    ParseError() = default;
+    // One refusal in one line, for checks of your own on top of a reader:
+    //   f_context.reply(ParseError(ParseError::OutOfRange, text, "my_key", 1, 10));
+    ParseError(Error f_error, const QString &f_input, const QString &f_subject, qint64 f_min = 0, qint64 f_max = 0) :
+        error(f_error),
+        input(f_input),
+        subject(f_subject),
+        min(f_min),
+        max(f_max)
+    {}
+
     Error error = NoError;
     QString input;   // the text as typed, or the client ID it named
     QString subject; // a stable key such as "area_id"; see subjectLabel()
