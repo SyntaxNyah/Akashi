@@ -91,6 +91,9 @@ bool PluginManager::startPlugins(const QStringList &f_allowlist)
 
         if (!l_entry.instance->load(*m_services)) {
             qCWarning(akashiPlugins) << "Plugin" << l_id << "load() returned false";
+            // Whatever load() registered before failing points into the
+            // library about to unload.
+            cleanupPlugin(l_id);
             l_entry.instance = nullptr;
             l_entry.loader->unload();
             l_entry.info.state = PluginInfo::State::Failed;
@@ -320,8 +323,12 @@ bool PluginManager::loadPlugin(const QString &f_id)
     l_boot_timer.start();
 
     if (l_entry.isScript()) {
-        if (!loadScriptEntry(l_entry))
+        if (!loadScriptEntry(l_entry)) {
+            // The host has released the script's state; what it registered
+            // before failing would call into it.
+            cleanupPlugin(f_id);
             return false;
+        }
         l_entry.info.boot_ms = l_boot_timer.elapsed();
         l_entry.info.state = PluginInfo::State::Started;
         if (!m_load_order.contains(f_id))
@@ -344,6 +351,7 @@ bool PluginManager::loadPlugin(const QString &f_id)
     }
 
     if (!l_entry.instance->load(*m_services)) {
+        cleanupPlugin(f_id);
         l_entry.instance = nullptr;
         l_entry.loader->unload();
         return false;
@@ -808,8 +816,11 @@ void PluginManager::cleanupPlugin(const QString &f_id)
         l_scheduler->cancelAll(f_id);
 
     auto l_packets = m_services->resolve<PacketService>(QStringLiteral("akashi.packets"));
-    if (l_packets)
+    if (l_packets) {
         l_packets->outboundInterceptors().unregisterAll(f_id);
+        l_packets->handlers().unregisterAll(f_id);
+        l_packets->codecs().unregisterAll(f_id);
+    }
 }
 
 QStringList PluginManager::dependentsOf(const QString &f_id) const

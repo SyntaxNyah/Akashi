@@ -74,6 +74,16 @@ class StubScriptHost : public akashi::IScriptPluginHost
     bool loadScriptPlugin(const QString &f_plugin_id, const QString &) override
     {
         loaded.append(f_plugin_id);
+        if (failing.contains(f_plugin_id)) {
+            // Registers something before failing, as a script that errors
+            // halfway through its entry would.
+            if (commands) {
+                akashi::CommandSpec l_spec;
+                l_spec.name = f_plugin_id.section(QLatin1Char('.'), -1) + QStringLiteral("_cmd");
+                commands->registerCommand(l_spec, [](akashi::CommandContext &) {}, f_plugin_id);
+            }
+            return false;
+        }
         return true;
     }
     void unloadScriptPlugin(const QString &f_plugin_id) override { unloaded.append(f_plugin_id); }
@@ -81,6 +91,8 @@ class StubScriptHost : public akashi::IScriptPluginHost
     QList<akashi::PluginInfo> manifests;
     QStringList loaded;
     QStringList unloaded;
+    QStringList failing;
+    akashi::CommandRegistry *commands = nullptr;
 };
 
 static akashi::PluginInfo makeManifest(const QString &f_id, const QStringList &f_dependencies)
@@ -108,6 +120,7 @@ class tst_PluginManager : public QObject
     void dependentsBlockUnloadWithoutCascade();
     void scriptDependencyCyclesNeverLoad();
     void cleanupRemovesRegistrations();
+    void failedLoadLeavesNoRegistrations();
     void aboutLeavesWithThePlugin();
 
     void headerParsesFullManifest();
@@ -252,6 +265,27 @@ void tst_PluginManager::cleanupRemovesRegistrations()
     QVERIFY(l_commands->contains(QStringLiteral("test_cmd")));
     l_commands->unregisterAll(QStringLiteral("test.plugin"));
     QVERIFY(!l_commands->contains(QStringLiteral("test_cmd")));
+}
+
+void tst_PluginManager::failedLoadLeavesNoRegistrations()
+{
+    QTemporaryDir l_tmp;
+    akashi::ServiceRegistry l_services;
+    auto l_commands = std::make_shared<akashi::CommandRegistry>();
+    l_services.registerService(l_commands);
+    auto l_host = std::make_shared<StubScriptHost>();
+    l_host->manifests = {makeManifest(QStringLiteral("akashi.broken"), {})};
+    l_host->failing = {QStringLiteral("akashi.broken")};
+    l_host->commands = l_commands.get();
+    QVERIFY(l_services.registerService(l_host));
+
+    // The script's state is gone once its load fails, so what it
+    // registered before failing must go too or it would call into it.
+    akashi::PluginManager l_mgr(&l_services, l_tmp.path());
+    l_mgr.startPlugins();
+    QCOMPARE(l_host->loaded, QStringList({QStringLiteral("akashi.broken")}));
+    QVERIFY(!l_commands->contains(QStringLiteral("broken_cmd")));
+    QVERIFY(l_mgr.pluginInfo(QStringLiteral("akashi.broken"))->state != akashi::PluginInfo::State::Started);
 }
 
 void tst_PluginManager::aboutLeavesWithThePlugin()
