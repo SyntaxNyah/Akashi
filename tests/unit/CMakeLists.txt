@@ -38,6 +38,7 @@ set(UNIT_TESTS
     medieval_parser
     text_utils
     command_registry
+    command_params
     helpers_checks
     helpers_parse
     permission_registry

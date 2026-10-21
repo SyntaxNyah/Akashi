@@ -19,7 +19,6 @@ void cmdUninvite(akashi::CommandContext &f_context);
 void cmdAreaLock(akashi::CommandContext &f_context);
 void cmdAreaSpectate(akashi::CommandContext &f_context);
 void cmdAreaUnlock(akashi::CommandContext &f_context);
-void cmdAreaKick(akashi::CommandContext &f_context);
 void cmdBackground(akashi::CommandContext &f_context);
 void cmdSide(akashi::CommandContext &f_context);
 void cmdLockBackground(akashi::CommandContext &f_context);

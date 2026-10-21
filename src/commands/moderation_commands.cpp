@@ -164,6 +164,25 @@ static std::function<bool(const QString &)> callerPermissions(CommandContext &f_
     };
 }
 
+// The targets a command may not act on, as declared on its spec or on the
+// client parameters of its forms - once each, for /help and /why.
+static QStringList immunityLines(const CommandSpec &f_spec)
+{
+    QStringList l_lines;
+    if (!f_spec.target_immune_if.isEmpty())
+        l_lines << "Cannot target holders of " + f_spec.target_immune_if + ".";
+    for (const CommandVariant &l_variant : f_spec.variants) {
+        for (const Param &l_param : l_variant.params) {
+            if (l_param.isImmuneIfAreaOwner())
+                l_lines << QStringLiteral("Cannot target the CMs of this area.");
+            if (!l_param.immunePermission().isEmpty())
+                l_lines << "Cannot target holders of " + l_param.immunePermission() + ".";
+        }
+    }
+    l_lines.removeDuplicates();
+    return l_lines;
+}
+
 // Who provides a command, when it is not core's own - a plugin that
 // replaced a command changes what it does and needs, so it says so.
 static QString providedBy(CommandRegistry *f_registry, const QString &f_name)
@@ -280,8 +299,8 @@ void cmdHelp(CommandContext &f_context)
                 l_text += " when " + l_spec->escalates_when;
             l_text += ".";
         }
-        if (!l_spec->target_immune_if.isEmpty())
-            l_text += "\nCannot target holders of " + l_spec->target_immune_if + ".";
+        for (const QString &l_line : immunityLines(*l_spec))
+            l_text += "\n" + l_line;
         if (const QString l_provider = providedBy(l_registry, f_command_name); !l_provider.isEmpty())
             l_text += "\n" + l_provider;
         return l_text;
@@ -451,8 +470,7 @@ void cmdWhy(CommandContext &f_context)
             if (!l_permissions.contains(l_spec->escalates_to))
                 l_permissions.append(l_spec->escalates_to);
         }
-        if (!l_spec->target_immune_if.isEmpty())
-            l_lines << "Cannot target holders of " + l_spec->target_immune_if + ".";
+        l_lines << immunityLines(*l_spec);
         if (const QString l_provider = providedBy(l_registry, l_query); !l_provider.isEmpty())
             l_lines << l_provider;
         for (const QString &l_permission : std::as_const(l_permissions))

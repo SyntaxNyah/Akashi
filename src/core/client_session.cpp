@@ -528,6 +528,28 @@ void ClientSession::dispatchCommand(const akashi::CommandRegistry::Resolved &f_c
 {
     const akashi::CommandSpec &l_spec = f_command.spec;
     const int argc = f_arguments.size();
+    const auto l_can = [this](const QString &f_permission) { return canPerform(f_permission); };
+
+    // A declared command: the first form, in order, whose parameters all
+    // read among those the caller may use.
+    if (!l_spec.variants.isEmpty() && l_spec.variants.first().isDeclared()) {
+        akashi::CommandContext l_context(this, m_server, f_arguments, l_spec.name);
+        const akashi::FormChoice l_choice = akashi::chooseForm(l_spec, f_arguments, *l_context.paramScope(), l_can);
+        if (l_choice.form) {
+            l_choice.form->run(l_context, *l_choice.args);
+            return;
+        }
+        if (l_choice.denied) {
+            sendServerMessage("You do not have permission to use that command.");
+            return;
+        }
+        l_context.reply(l_choice.error);
+        // A count mistake is answered with the forms that can be typed.
+        if (l_choice.error.error == akashi::helpers::ParseError::MissingValue || l_choice.error.error == akashi::helpers::ParseError::ExtraValue) {
+            sendServerMessage("Usage:\n" + l_choice.usages.join(QLatin1Char('\n')));
+        }
+        return;
+    }
 
     // A variant command carries its gates per argument shape; the
     // matched form decides which permissions apply and what runs.
@@ -543,7 +565,7 @@ void ClientSession::dispatchCommand(const akashi::CommandRegistry::Resolved &f_c
     // Permission check: the matched form's whole gate. The same gate
     // CommandRegistry::canUse answers /commands with.
     const akashi::Gate &l_gate = l_variant ? l_variant->gate : l_spec.gate;
-    if (!l_gate.passes([this](const QString &f_permission) { return canPerform(f_permission); })) {
+    if (!l_gate.passes(l_can)) {
         sendServerMessage("You do not have permission to use that command.");
         return;
     }
@@ -922,8 +944,8 @@ void ClientSession::attemptLogin(const QString &f_message)
 void ClientSession::runCommand(const QString &f_command, const QStringList &f_arguments)
 {
     QStringList l_logged_args = f_arguments;
-    if (auto l_spec = m_server->commandRegistry()->spec(f_command); l_spec && l_spec->sensitive_args_from >= 0) {
-        for (int i = l_spec->sensitive_args_from; i < l_logged_args.size(); ++i) {
+    if (auto l_spec = m_server->commandRegistry()->spec(f_command); l_spec && l_spec->sensitiveFrom() >= 0) {
+        for (int i = l_spec->sensitiveFrom(); i < l_logged_args.size(); ++i) {
             l_logged_args[i] = QStringLiteral("***");
         }
     }

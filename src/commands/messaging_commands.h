@@ -2,6 +2,7 @@
 
 namespace akashi {
 class CommandRegistry;
+class Args;
 class CommandContext;
 }
 
@@ -15,7 +16,7 @@ void cmdNeed(akashi::CommandContext &f_context);
 void cmdSwitch(akashi::CommandContext &f_context);
 void cmdRandomChar(akashi::CommandContext &f_context);
 void cmdToggleGlobal(akashi::CommandContext &f_context);
-void cmdPM(akashi::CommandContext &f_context);
+void cmdPM(akashi::CommandContext &f_context, const akashi::Args &f_args);
 void cmdAnnounce(akashi::CommandContext &f_context);
 void cmdM(akashi::CommandContext &f_context);
 void cmdGM(akashi::CommandContext &f_context);

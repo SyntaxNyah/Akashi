@@ -99,6 +99,8 @@ set(AKASHI_SOURCES
   src/core/client_session.h
   src/core/command_context.cpp
   src/core/include/core/command_context.h
+  src/core/command_params.cpp
+  src/core/include/core/command_params.h
   src/core/command_registry.cpp
   src/core/include/core/command_registry.h
   src/core/include/core/command_spec.h

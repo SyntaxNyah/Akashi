@@ -404,6 +404,9 @@ void tst_HelpersParse::errorString_data()
     QTest::newRow("NoSuchClient") << l_make(ParseError::NoSuchClient, "7", "client_id") << "No client with ID 7 is connected.";
     QTest::newRow("IsSelf") << l_make(ParseError::IsSelf, "0", "client_id") << "You cannot target yourself with this command.";
     QTest::newRow("NotInArea") << l_make(ParseError::NotInArea, "1", "client_id") << "Client 1 is not in this area.";
+    QTest::newRow("MissingValue") << l_make(ParseError::MissingValue, "", "target") << "The target is missing.";
+    QTest::newRow("ExtraValue") << l_make(ParseError::ExtraValue, "99", "") << "\"99\" was not expected here.";
+    QTest::newRow("Immune") << l_make(ParseError::Immune, "3", "client_id") << "Client 3 cannot be targeted by this command.";
 }
 
 void tst_HelpersParse::errorString()

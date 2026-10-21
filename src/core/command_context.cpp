@@ -5,6 +5,7 @@
 #include "core/client_session.h"
 #include "core/command_registry.h"
 #include "core/server_context.h"
+#include "core/server_settings.h"
 #include "world/area.h"
 
 #include <QRandomGenerator>
@@ -173,6 +174,59 @@ void CommandContext::replyToServer(const QString &f_message)
 void CommandContext::sendPacket(const QString &f_header, const QStringList &f_fields)
 {
     m_invoker->sendPacket(f_header, f_fields);
+}
+
+namespace {
+
+// ParamScope for a live session: answers from the server's state.
+class SessionScope : public ParamScope
+{
+  public:
+    SessionScope(akashi::ClientSession *f_invoker, ServerContext *f_server) :
+        m_invoker(f_invoker),
+        m_server(f_server)
+    {}
+
+    int invokerId() const override { return m_invoker->clientId(); }
+    int invokerArea() const override { return m_invoker->areaId(); }
+    int areaCount() const override { return m_server->areaCount(); }
+    bool invokerCan(const QString &f_permission) const override { return m_invoker->canPerform(f_permission); }
+
+    helpers::Result<akashi::ClientSession *> findClient(const QString &f_text, const PlayerFilter &f_filter) const override
+    {
+        return m_server->playerDirectory().find(f_text, f_filter);
+    }
+
+    bool clientCan(akashi::ClientSession *f_client, const QString &f_permission) const override
+    {
+        return f_client->canPerform(f_permission);
+    }
+
+    bool ownsInvokerArea(akashi::ClientSession *f_client) const override
+    {
+        const Area *l_area = m_server->areaById(m_invoker->areaId());
+        return l_area && l_area->owners().contains(f_client->clientId());
+    }
+
+    int setting(const QString &f_name) const override
+    {
+        if (f_name == QLatin1String("max_dice"))
+            return m_server->serverSettings()->max_dice();
+        if (f_name == QLatin1String("max_value"))
+            return m_server->serverSettings()->max_value();
+        return 0;
+    }
+
+  private:
+    akashi::ClientSession *m_invoker;
+    ServerContext *m_server;
+};
+
+} // namespace
+
+std::unique_ptr<ParamScope> CommandContext::paramScope() const
+{
+    return std::make_unique<SessionScope>(m_invoker, m_server);
 }
 
 akashi::ClientSession *CommandContext::self() const

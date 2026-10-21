@@ -1,5 +1,8 @@
 #pragma once
 
+#include "akashi_core_export.h"
+#include "core/command_params.h"
+
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -11,6 +14,9 @@ namespace akashi {
 class CommandContext;
 
 using CommandHandler = std::function<void(CommandContext &)>;
+// The handler of a declared form: every parameter is already read and
+// checked, and arrives in Args.
+using ArgsHandler = std::function<void(CommandContext &, const Args &)>;
 
 // A command form's whole gate: any-of over all-of. One permission is a
 // group of one, so the ordinary case still reads as a plain name -
@@ -117,6 +123,14 @@ struct CommandVariant
     QString description;
     CommandHandler handler;
 
+    // A declared form names its parameters and runs with checked values.
+    // The dispatcher tries declared forms in order and runs the first
+    // whose parameters all read; usage is generated when left empty.
+    QList<Param> params;
+    ArgsHandler run;
+
+    bool isDeclared() const { return bool(run); }
+
     bool matches(int f_argc) const
     {
         return f_argc >= min_args && (max_args < 0 || f_argc <= max_args);
@@ -155,6 +169,23 @@ struct CommandSpec
     // named variable first - never call match() on a CommandRegistry lookup
     // returned by value (e.g. registry.spec(name)->match(argc)), or the
     // pointer dangles once the temporary spec dies.
+    // The first argument position the command log must hide, -1 for none:
+    // the declared sensitive_args_from, or the earliest sensitive()
+    // parameter of any declared form - the log runs before a form is
+    // picked, so the strictest position wins.
+    int sensitiveFrom() const
+    {
+        int l_from = sensitive_args_from;
+        for (const CommandVariant &l_variant : variants) {
+            for (int i = 0; i < l_variant.params.size(); ++i) {
+                if (l_variant.params.at(i).isSensitive() && (l_from < 0 || i < l_from)) {
+                    l_from = i;
+                }
+            }
+        }
+        return l_from;
+    }
+
     const CommandVariant *match(int f_argc) const
     {
         for (const CommandVariant &l_variant : variants) {
@@ -165,5 +196,23 @@ struct CommandSpec
         return nullptr;
     }
 };
+
+// Which declared form runs for the typed arguments, or why none does.
+struct FormChoice
+{
+    const CommandVariant *form = nullptr; // the form to run, when one fits
+    std::optional<Args> args;             // its checked values
+    helpers::ParseError error;            // otherwise: the refusal to show
+    bool denied = false;                  // otherwise: only closed forms fit
+    QStringList usages;                   // the forms the caller may type
+};
+
+// Tries a declared command's forms in order and picks the first whose
+// parameters all read, among the forms whose gate the caller passes.
+// When none fits it answers the refusal of the form that read furthest,
+// or denied when the caller lacks no syntax but a permission: no form
+// open to them fits, or only a closed one would have.
+AKASHI_CORE_EXPORT FormChoice chooseForm(const CommandSpec &f_spec, const QStringList &f_arguments, const ParamScope &f_scope,
+                                         const std::function<bool(const QString &)> &f_can_perform);
 
 } // namespace akashi

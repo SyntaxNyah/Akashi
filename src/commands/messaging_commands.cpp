@@ -146,17 +146,16 @@ void cmdToggleGlobal(CommandContext &f_context)
     f_context.reply("Global chat set to " + l_str_en);
 }
 
-void cmdPM(CommandContext &f_context)
+// /pm <target> <message>: the target is a connected client and the
+// message is the rest of the line, both already checked.
+void cmdPM(CommandContext &f_context, const Args &f_args)
 {
-    akashi::ClientSession *l_target_client = f_context.findClient(0);
-    if (!l_target_client) {
-        return;
-    }
+    akashi::ClientSession *l_target_client = f_args.client(QStringLiteral("target"));
     if (l_target_client->isPmMuted()) {
         f_context.reply("That user is not recieving PMs.");
         return;
     }
-    const QString l_message = helpers::joinFrom(f_context.arguments(), 1);
+    const QString l_message = f_args.text(QStringLiteral("message"));
     l_target_client->sendServerMessage("Message from " + f_context.name() + " (" + QString::number(f_context.clientId()) + "): " + l_message);
     f_context.reply("PM sent to " + QString::number(l_target_client->clientId()) + ". Message: " + l_message);
     announceGlobalMessage(f_context, QStringLiteral("pm"), l_message);
@@ -482,7 +481,15 @@ void registerMessagingCommands(CommandRegistry &f_registry)
     f_registry.registerCommand({"switch", {}, {permission::characters_switch}, 1, "/switch <character>", "Switches you to the named character."}, cmdSwitch, "core");
     f_registry.registerCommand({"randomchar", {}, {permission::characters_randomchar}, 0, "/randomchar", "Picks a random character for you."}, cmdRandomChar, "core");
     f_registry.registerCommand({"toggleglobal", {}, {permission::messaging_toggleglobal}, 0, "/toggleglobal", "Toggles whether you receive global chat."}, cmdToggleGlobal, "core");
-    f_registry.registerCommand({"pm", {}, {permission::messaging_pm}, 2, "/pm <id> <message>", "Sends a private message to a client."}, cmdPM, "core");
+    {
+        CommandSpec l_pm;
+        l_pm.name = QStringLiteral("pm");
+        l_pm.description = QStringLiteral("Sends a private message to a client.");
+        l_pm.variants = {
+            {.id = QStringLiteral("send"), .gate = {permission::messaging_pm}, .params = {param::client(QStringLiteral("target")), param::text(QStringLiteral("message"))}, .run = cmdPM},
+        };
+        f_registry.registerCommand(l_pm, QStringLiteral("core"));
+    }
     f_registry.registerCommand({"announce", {}, {permission::announcer}, 1, "/announce <message>", "Sends an announcement to the whole server."}, cmdAnnounce, "core");
     f_registry.registerCommand({"m", {}, {permission::chat_moderator}, 1, "/m <message>", "Sends a message to the moderator chat."}, cmdM, "core");
     f_registry.registerCommand({"gm", {}, {permission::chat_moderator}, 1, "/gm <message>", "Sends a global message tagged as a moderator."}, cmdGM, "core");

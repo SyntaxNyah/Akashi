@@ -34,6 +34,9 @@ struct AKASHI_CORE_EXPORT ParseError
         NoSuchClient,    // a client ID nobody holds
         IsSelf,          // the asker, where the asker is excluded
         NotInArea,       // a client standing outside the required area
+        MissingValue,    // nothing given where the subject was needed
+        ExtraValue,      // more given than anything reads
+        Immune,          // a client the command may not act on
     };
     Q_ENUM(Error)
 

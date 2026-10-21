@@ -291,52 +291,38 @@ void cmdAreaUnlock(CommandContext &f_context)
     f_context.replyToArea("This area is now unlocked.");
 }
 
-void cmdAreaKick(CommandContext &f_context)
+// Moves one client out of the invoker's area, uninvited, and tells them.
+static void kickToArea(CommandContext &f_context, akashi::ClientSession *f_target, int f_area_id)
 {
-    akashi::Area *l_area = f_context.server()->areaById(f_context.areaId());
+    akashi::Area *l_to = f_context.server()->areaById(f_area_id);
+    f_target->changeArea(f_area_id);
+    f_context.area()->uninvite(f_target->clientId());
+    f_target->sendServerMessage("You have been kicked to area " + l_to->displayName() + ".");
+}
 
-    int target_area_id = 0;
+// /area_kick <target> [destination]: the target is already checked - in
+// this area, and not one of its CMs.
+static void cmdAreaKickOne(CommandContext &f_context, const Args &f_args)
+{
+    const int l_to = f_args.has(QStringLiteral("destination")) ? f_args.area(QStringLiteral("destination")) : 0;
+    akashi::ClientSession *l_target = f_args.client(QStringLiteral("target"));
+    kickToArea(f_context, l_target, l_to);
+    f_context.reply("Client " + QString::number(l_target->clientId()) + " kicked to area " + f_context.server()->areaById(l_to)->displayName() + ".");
+}
 
-    if (f_context.argc() >= 2) {
-        // The cross-area form's gamemaster-AND-kick gate is the variant's
-        // requirement group; only the argument shape is checked here.
-        const auto l_parsed = helpers::parseInt(f_context.argument(1), QStringLiteral("area_id"), 0, f_context.server()->areaCount() - 1);
-        if (!l_parsed) {
-            f_context.reply(l_parsed.error());
-            return;
+// /area_kick all [destination]: everyone here except the invoker and the
+// area's CMs.
+static void cmdAreaKickAll(CommandContext &f_context, const Args &f_args)
+{
+    const int l_to = f_args.has(QStringLiteral("destination")) ? f_args.area(QStringLiteral("destination")) : 0;
+    const QList<int> l_owners = f_context.area()->owners();
+    const QVector<akashi::ClientSession *> l_clients = f_context.server()->clients();
+    for (akashi::ClientSession *l_client : l_clients) {
+        if (l_client->areaId() == f_context.areaId() && l_client->clientId() != f_context.clientId() && !l_owners.contains(l_client->clientId())) {
+            kickToArea(f_context, l_client, l_to);
         }
-        target_area_id = *l_parsed;
     }
-
-    akashi::Area *target_area = f_context.server()->areaById(target_area_id);
-
-    if (f_context.argument(0) == "all") {
-        const QVector<akashi::ClientSession *> l_clients = f_context.server()->clients();
-        for (akashi::ClientSession *l_client : l_clients) {
-            if (l_client->areaId() == f_context.areaId() && l_client->clientId() != f_context.clientId()) {
-                if (!f_context.targetIsImmune(l_client->clientId())) {
-                    l_client->changeArea(target_area_id);
-                    l_area->uninvite(l_client->clientId());
-                    l_client->sendServerMessage("You have been kicked to area " + target_area->displayName() + ".");
-                }
-            }
-        }
-        f_context.reply("All clients kicked to area " + target_area->displayName() + ".");
-        return;
-    }
-
-    akashi::ClientSession *l_client_to_kick = f_context.findClient(0, {.in_area = f_context.areaId()});
-    if (!l_client_to_kick) {
-        return;
-    }
-    if (f_context.targetIsImmune(l_client_to_kick->clientId())) {
-        f_context.reply("You cannot kick another CM!");
-        return;
-    }
-    l_client_to_kick->changeArea(target_area_id);
-    l_area->uninvite(l_client_to_kick->clientId());
-    l_client_to_kick->sendServerMessage("You have been kicked to area " + target_area->displayName() + ".");
-    f_context.reply("Client " + QString::number(l_client_to_kick->clientId()) + " kicked to area " + target_area->displayName() + ".");
+    f_context.reply("All clients kicked to area " + f_context.server()->areaById(l_to)->displayName() + ".");
 }
 
 void cmdBackground(CommandContext &f_context)
@@ -736,12 +722,18 @@ void registerAreaCommands(CommandRegistry &f_registry)
         CommandSpec l_area_kick;
         l_area_kick.name = QStringLiteral("area_kick");
         l_area_kick.aliases = {QStringLiteral("kick_area"), QStringLiteral("areakick")};
-        l_area_kick.usage = QStringLiteral("/area_kick <id|all> [area]");
         l_area_kick.description = QStringLiteral("Kicks a client or all non-CMs from the area.");
-        l_area_kick.target_immune_if = akashi::permission::area_cm;
+        // A client in this area that is not one of its CMs - the CMs of an
+        // area are immune to its kicks, as before.
+        const Param l_target = param::client(QStringLiteral("target")).inArea().immuneIfAreaOwner();
+        const Param l_all = param::word(QStringLiteral("who"), {QStringLiteral("all")});
+        const Param l_destination = param::area(QStringLiteral("destination"));
+        const Gate l_cross_area = Gate::allOf({akashi::permission::area_cm, akashi::permission::kick});
         l_area_kick.variants = {
-            {.id = QStringLiteral("own_area"), .min_args = 1, .max_args = 1, .gate = {akashi::permission::cm_kick}, .usage = QStringLiteral("/area_kick <id|all>"), .description = QStringLiteral("Kicks to the first area."), .handler = cmdAreaKick},
-            {.id = QStringLiteral("cross_area"), .min_args = 2, .max_args = -1, .gate = akashi::Gate::allOf({akashi::permission::area_cm, akashi::permission::kick}), .usage = QStringLiteral("/area_kick <id|all> <area>"), .description = QStringLiteral("Kicks to a specific area."), .handler = cmdAreaKick},
+            {.id = QStringLiteral("one"), .gate = {akashi::permission::cm_kick}, .description = QStringLiteral("Kicks a client to the first area."), .params = {l_target}, .run = cmdAreaKickOne},
+            {.id = QStringLiteral("all"), .gate = {akashi::permission::cm_kick}, .description = QStringLiteral("Kicks everyone but the CMs to the first area."), .params = {l_all}, .run = cmdAreaKickAll},
+            {.id = QStringLiteral("one_to"), .gate = l_cross_area, .description = QStringLiteral("Kicks a client to a specific area."), .params = {l_target, l_destination}, .run = cmdAreaKickOne},
+            {.id = QStringLiteral("all_to"), .gate = l_cross_area, .description = QStringLiteral("Kicks everyone but the CMs to a specific area."), .params = {l_all, l_destination}, .run = cmdAreaKickAll},
         };
         f_registry.registerCommand(l_area_kick, QStringLiteral("core"));
     }

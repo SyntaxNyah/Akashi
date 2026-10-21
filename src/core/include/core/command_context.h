@@ -1,6 +1,7 @@
 #pragma once
 
 #include "akashi_core_export.h"
+#include "core/command_params.h"
 #include "core/player_directory.h"
 
 #include <QHostAddress>
@@ -8,6 +9,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <memory>
 #include <optional>
 
 namespace akashi {
@@ -122,6 +124,10 @@ class AKASHI_CORE_EXPORT CommandContext
     // PlayerDirectory::find. When it names nobody suitable this replies
     // with the reason and answers nullptr, so a caller only returns.
     akashi::ClientSession *findClient(int f_argument_index = 0, const PlayerFilter &f_filter = {});
+
+    // The world as declared parameters see it from the invoker's place:
+    // who is asking, where, who else is connected, the server's limits.
+    std::unique_ptr<ParamScope> paramScope() const;
 
     // The same lookup for plugin code, wrapped as a TargetPlayer.
     std::optional<TargetPlayer> resolveTarget(int f_argument_index = 0, const PlayerFilter &f_filter = {});

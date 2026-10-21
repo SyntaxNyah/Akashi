@@ -182,6 +182,7 @@ class ProtocolTest : public QObject
     void authPacketAuthenticatesAgainstTheActiveSystem();
     void advancedBootCreatesARootAccount();
     void setpermsCannotGrantSuperInAnyCase();
+    void declaredCommandsRunEndToEnd();
     void emptyModpassBootGeneratesOne();
     void oocRoundtrip();
     void areaMessageRejectsOutOfRangeAreaId();
@@ -1123,7 +1124,7 @@ void ProtocolTest::whyExplainsResolutionAndDumpGrantsLists()
     // immunity included.
     command(QStringLiteral("/why area_kick"));
     QVERIFY(output.contains(QStringLiteral("area.cm+kick")));
-    QVERIFY(output.contains(QStringLiteral("Cannot target holders of area.cm.")));
+    QVERIFY(output.contains(QStringLiteral("Cannot target the CMs of this area.")));
 
     // The walk-in claim is a declared escalation, so /why cm agrees with
     // what /cm actually answers: the claim needs area.cm, this area does
@@ -1693,6 +1694,51 @@ void ProtocolTest::setpermsCannotGrantSuperInAnyCase()
     // The supervisor's ordinary power still works, in any case, and is
     // stored in the canonical spelling.
     QVERIFY(oocReply(boss, QStringLiteral("/setperms target moderator")).contains(QStringLiteral("Successfully applied role MODERATOR")));
+}
+
+void ProtocolTest::declaredCommandsRunEndToEnd()
+{
+    // /pm and /area_kick are declared commands: the dispatcher picks the
+    // form, reads and checks every parameter, and refuses with the
+    // reader's ParseError - rendered here by the same helper.
+    using akashi::helpers::ParseError;
+    TestClient player; // client 0
+    joinServer(player);
+    TestClient mod; // client 1
+    joinServer(mod, 1);
+    loginAsModerator(mod);
+    player.waitForIdle();
+    while (player.pendingCount() > 0)
+        player.takeNext();
+
+    // The message is the rest of the line, and reaches the target.
+    QVERIFY(oocReply(mod, QStringLiteral("/pm 0 hello there")).contains(QStringLiteral("PM sent to 0. Message: hello there")));
+    player.waitForIdle();
+    QStringList received;
+    while (player.pendingCount() > 0)
+        received << player.takeNext();
+    QVERIFY2(!received.filter(QStringLiteral("hello there")).isEmpty(), qPrintable(received.join(" | ")));
+
+    // A missing value is a count mistake: the reason, then the usage.
+    const QString missing = oocReply(mod, QStringLiteral("/pm 0"));
+    QVERIFY2(missing.contains(ParseError(ParseError::MissingValue, {}, QStringLiteral("message")).errorString()), qPrintable(missing));
+    QVERIFY2(missing.contains(QStringLiteral("/pm <target> <message...>")), qPrintable(missing));
+
+    // The cross-area form read furthest, so its refusal is the one shown.
+    // The fixture's areas.json holds two areas, IDs 0 and 1.
+    const QString badArea = oocReply(mod, QStringLiteral("/area_kick 0 9"));
+    QVERIFY2(badArea.contains(ParseError(ParseError::OutOfRange, QStringLiteral("9"), QStringLiteral("area_id"), 0, 1).errorString()), qPrintable(badArea));
+
+    // Without the CM powers no form is open: refused, nothing looked up.
+    QVERIFY(oocReply(player, QStringLiteral("/area_kick 1")).contains(QStringLiteral("You do not have permission to use that command.")));
+
+    // The moderator moves the player to Courtroom 1.
+    QVERIFY(oocReply(mod, QStringLiteral("/area_kick 0 1")).contains(QStringLiteral("Client 0 kicked to area")));
+    player.waitForIdle();
+    received.clear();
+    while (player.pendingCount() > 0)
+        received << player.takeNext();
+    QVERIFY2(!received.filter(QStringLiteral("You have been kicked to area")).isEmpty(), qPrintable(received.join(" | ")));
 }
 
 void ProtocolTest::emptyModpassBootGeneratesOne()

@@ -31,12 +31,35 @@ bool CommandRegistry::validSpec(const CommandSpec &f_spec) const
     if (f_spec.name.isEmpty()) {
         return false;
     }
+    // A command is declared or not as a whole: the dispatcher picks forms
+    // one way or the other, never both.
+    const bool l_declared = !f_spec.variants.isEmpty() && f_spec.variants.first().isDeclared();
     for (const CommandVariant &l_variant : f_spec.variants) {
-        if (l_variant.id.isEmpty() || !l_variant.handler) {
+        if (l_variant.id.isEmpty() || l_variant.isDeclared() != l_declared) {
+            return false;
+        }
+        if (l_declared ? !validParams(l_variant.params) : !l_variant.handler) {
             return false;
         }
     }
     return true;
+}
+
+// The definition as stored: declared forms get their usage generated from
+// their parameters, and the command's usage lists them, unless given.
+static CommandSpec prepared(CommandSpec f_spec)
+{
+    QStringList l_usages;
+    for (CommandVariant &l_variant : f_spec.variants) {
+        if (l_variant.isDeclared() && l_variant.usage.isEmpty()) {
+            l_variant.usage = usageOf(f_spec.name.toLower(), l_variant.params);
+        }
+        l_usages << l_variant.usage;
+    }
+    if (f_spec.usage.isEmpty() && !f_spec.variants.isEmpty() && f_spec.variants.first().isDeclared()) {
+        f_spec.usage = l_usages.join(QLatin1Char('\n'));
+    }
+    return f_spec;
 }
 
 bool CommandRegistry::aliasesCollide(const CommandSpec &f_spec, const QString &f_slot) const
@@ -68,7 +91,7 @@ bool CommandRegistry::registerCommand(const CommandSpec &f_spec, CommandHandler 
         return false;
     }
     m_vacated.remove(l_key);
-    m_entries.insert(l_key, Entry{f_spec, std::move(f_handler), f_owner_id, {}});
+    m_entries.insert(l_key, Entry{prepared(f_spec), std::move(f_handler), f_owner_id, {}});
     for (const QString &l_alias : f_spec.aliases) {
         m_aliases.insert(l_alias.toLower(), l_key);
     }
@@ -105,7 +128,7 @@ bool CommandRegistry::replace(const CommandSpec &f_spec, CommandHandler f_handle
         dropOccupant(l_key);
     }
     m_vacated.remove(l_key);
-    m_entries.insert(l_key, Entry{f_spec, std::move(f_handler), f_owner_id, l_previous == f_owner_id ? QString() : l_previous});
+    m_entries.insert(l_key, Entry{prepared(f_spec), std::move(f_handler), f_owner_id, l_previous == f_owner_id ? QString() : l_previous});
     for (const QString &l_alias : f_spec.aliases) {
         m_aliases.insert(l_alias.toLower(), l_key);
     }

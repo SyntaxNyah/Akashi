@@ -34,6 +34,12 @@ QString ParseError::errorString() const
         return tr("You cannot target yourself with this command.");
     case NotInArea:
         return tr("Client %1 is not in this area.").arg(input);
+    case MissingValue:
+        return tr("The %1 is missing.").arg(l_subject);
+    case ExtraValue:
+        return tr("\"%1\" was not expected here.").arg(input);
+    case Immune:
+        return tr("Client %1 cannot be targeted by this command.").arg(input);
     }
     return {};
 }
