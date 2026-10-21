@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/database_service.h"
 #include "core/db_manager.h"
 

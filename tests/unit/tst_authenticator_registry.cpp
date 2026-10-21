@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/authenticator_registry.h"
 
 #include <QRegularExpression>

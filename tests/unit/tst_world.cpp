@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/service_registry.h"
 #include "core/rule_actions.h"
 #include "world/area.h"

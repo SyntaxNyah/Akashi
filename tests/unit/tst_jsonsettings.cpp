@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/json_settings.h"
 
 #include <QTemporaryDir>

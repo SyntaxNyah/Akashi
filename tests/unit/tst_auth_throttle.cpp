@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/auth_throttle.h"
 
 #include <QTest>

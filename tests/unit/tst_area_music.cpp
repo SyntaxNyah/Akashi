@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "proto/area_music.h"
 #include "proto/packet_codec.h"
 #include "proto/packet_registry.h"

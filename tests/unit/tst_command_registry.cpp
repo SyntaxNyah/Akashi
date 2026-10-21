@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/command_context.h"
 #include "core/command_registry.h"
 #include "core/command_spec.h"

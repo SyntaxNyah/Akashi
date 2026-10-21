@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "proto/packet_registry.h"
 
 #include <QTest>

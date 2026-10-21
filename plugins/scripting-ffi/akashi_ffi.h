@@ -1,4 +1,3 @@
-/* AI-generated: written by Claude. */
 /*
  * The flat C surface scripting hosts build on. This header is deliberately
  * self-contained: no Qt types, UTF-8 strings passed as pointer plus explicit

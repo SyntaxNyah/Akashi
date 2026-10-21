@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/log_event.h"
 #include "akashi/log_writer.h"
 #include "core/log_service.h"

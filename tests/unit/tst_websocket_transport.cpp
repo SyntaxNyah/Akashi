@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/websocket_receiver.h"
 
 #include <QNetworkRequest>

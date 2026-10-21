@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/config_store.h"
 #include "akashi/database_service.h"
 #include "akashi/service_registry.h"

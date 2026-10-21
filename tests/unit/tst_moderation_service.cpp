@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/permissions.h"
 #include "core/db_manager.h"
 #include "core/moderation_service.h"

@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/config_store.h"
 #include "akashi/setting_notifier.h"
 #include "akashi/settings.h"

@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/network_service.h"
 #include "akashi/service_registry.h"
 

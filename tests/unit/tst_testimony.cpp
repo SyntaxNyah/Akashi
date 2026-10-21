@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "world/testimony_recorder.h"
 
 #include <QTest>

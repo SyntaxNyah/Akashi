@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #pragma once
 
 #include "core/text_filter_registry.h"

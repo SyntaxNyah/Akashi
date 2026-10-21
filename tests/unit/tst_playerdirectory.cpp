@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/service_registry.h"
 #include "core/client_session.h"
 #include "core/command_context.h"

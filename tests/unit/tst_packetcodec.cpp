@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "proto/packet_codec.h"
 
 #include <QTest>

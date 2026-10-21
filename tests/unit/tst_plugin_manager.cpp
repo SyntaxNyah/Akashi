@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/plugin.h"
 #include "akashi/script_plugin_host.h"
 #include "akashi/service_registry.h"

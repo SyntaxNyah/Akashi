@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "modbot_rules.h"
 #include "modbot_worker.h"
 

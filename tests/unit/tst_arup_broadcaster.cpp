@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/arup_broadcaster.h"
 #include "proto/packet.h"
 #include "world/area.h"

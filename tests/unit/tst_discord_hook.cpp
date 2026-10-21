@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/discord_hook.h"
 #include "core/discord_message.h"
 #include "testtools/webhook_receiver.h"

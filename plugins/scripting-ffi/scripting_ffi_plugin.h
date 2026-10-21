@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #pragma once
 
 #include "akashi/plugin.h"

@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/mmdb_reader.h"
 
 #include <QTemporaryDir>

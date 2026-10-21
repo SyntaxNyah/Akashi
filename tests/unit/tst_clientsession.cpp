@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/client_session.h"
 #include "core/player_state.h"
 #include "proto/packet.h"

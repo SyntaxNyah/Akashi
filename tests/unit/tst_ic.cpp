@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/text_filter_registry.h"
 #include "proto/ic.h"
 #include "proto/packet_registry.h"

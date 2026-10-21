@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/medieval_parser.h"
 
 #include <QTest>

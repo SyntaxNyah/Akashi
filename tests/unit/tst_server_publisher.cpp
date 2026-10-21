@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/config_store.h"
 #include "core/server_publisher.h"
 #include "core/server_settings.h"

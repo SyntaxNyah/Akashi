@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 //////////////////////////////////////////////////////////////////////////////////////
 //    akashi - a server for Attorney Online 2                                       //
 //    Copyright (C) 2020  scatterflower                                             //

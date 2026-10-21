@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 // A headless AO2 client built on the real client's netcode. It joins a
 // running akashi server the same way the desktop client does, then walks
 // the playtest checklist: pick a character, chat in OOC and IC, change

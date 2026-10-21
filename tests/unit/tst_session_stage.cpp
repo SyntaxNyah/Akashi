@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/client_session.h"
 #include "proto/client_profile.h"
 #include "testtools/fake_transport.h"

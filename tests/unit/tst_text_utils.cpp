@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "proto/text_utils.h"
 
 #include <QTest>

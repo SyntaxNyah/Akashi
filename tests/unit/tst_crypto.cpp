@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/crypto_helper.h"
 
 #include <QTest>

@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/area_rule.h"
 #include "akashi/event.h"
 #include "world/rule_registry.h"

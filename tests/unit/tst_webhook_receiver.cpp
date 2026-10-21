@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "testtools/webhook_receiver.h"
 
 #include <QJsonObject>

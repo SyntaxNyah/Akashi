@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/core_authenticators.h"
 #include "core/crypto_helper.h"
 #include "core/db_manager.h"

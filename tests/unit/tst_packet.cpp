@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "proto/evidence.h"
 #include "proto/packet.h"
 

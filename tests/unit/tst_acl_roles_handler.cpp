@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/permission_registry.h"
 
 #include <QDebug>

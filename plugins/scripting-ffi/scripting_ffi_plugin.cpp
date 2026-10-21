@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "scripting_ffi_plugin.h"
 
 #include "akashi/config_entry.h"

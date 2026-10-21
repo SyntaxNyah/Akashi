@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/filesystem_service.h"
 
 #include <QTemporaryDir>

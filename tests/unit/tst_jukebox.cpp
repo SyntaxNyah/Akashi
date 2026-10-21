@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "world/floor.h"
 #include "world/jukebox.h"
 

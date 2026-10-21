@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/log_event.h"
 #include "writer_sql.h"
 

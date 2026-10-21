@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "akashi/config_store.h"
 #include "world/area.h"
 

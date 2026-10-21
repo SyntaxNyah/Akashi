@@ -1,4 +1,3 @@
-// AI-generated: written by Claude.
 #include "core/exit_code.h"
 #include "core/server_context.h"
 
