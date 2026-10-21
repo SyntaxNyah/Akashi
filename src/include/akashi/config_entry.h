@@ -32,21 +32,15 @@ class AKASHI_CORE_EXPORT ConfigEntry
     Check m_check;
 };
 
-// The value must be a number between min and max.
-AKASHI_CORE_EXPORT ConfigEntry::Check inRange(double f_min, double f_max);
-// The value must be a number of at least min.
-AKASHI_CORE_EXPORT ConfigEntry::Check atLeast(double f_min);
-// The value must be a number of at most max.
-AKASHI_CORE_EXPORT ConfigEntry::Check atMost(double f_max);
-// Every given check must pass.
-AKASHI_CORE_EXPORT ConfigEntry::Check allOf(const QList<ConfigEntry::Check> &f_checks);
-// The value must be one of the given words, compared without case.
-AKASHI_CORE_EXPORT ConfigEntry::Check oneOf(const QStringList &f_words);
-// The value must be empty or a time of day like 04:30.
-AKASHI_CORE_EXPORT ConfigEntry::Check emptyOrTime();
-// The value must be a well-formed http or https URL.
-AKASHI_CORE_EXPORT ConfigEntry::Check url();
-// An empty value passes; anything else must pass the given check.
-AKASHI_CORE_EXPORT ConfigEntry::Check emptyOr(ConfigEntry::Check f_check);
+// The value checks live in akashi.helpers, so a range or a word list means
+// the same thing in a config file as anywhere else.
+using helpers::allOf;
+using helpers::atLeast;
+using helpers::atMost;
+using helpers::emptyOr;
+using helpers::emptyOrTime;
+using helpers::inRange;
+using helpers::oneOf;
+using helpers::url;
 
 } // namespace akashi

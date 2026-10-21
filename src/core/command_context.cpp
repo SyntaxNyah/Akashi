@@ -6,7 +6,6 @@
 #include "core/command_registry.h"
 #include "core/permission_registry.h"
 #include "core/server_context.h"
-#include "core/server_settings.h"
 #include "world/area.h"
 
 #include <QRandomGenerator>
@@ -207,15 +206,6 @@ class SessionScope : public ParamScope
     {
         const Area *l_area = m_server->areaById(m_invoker->areaId());
         return l_area && l_area->owners().contains(f_client->clientId());
-    }
-
-    int setting(const QString &f_name) const override
-    {
-        if (f_name == QLatin1String("max_dice"))
-            return m_server->serverSettings()->max_dice();
-        if (f_name == QLatin1String("max_value"))
-            return m_server->serverSettings()->max_value();
-        return 0;
     }
 
     QStringList roleIds() const override { return m_server->aclRolesHandler()->roleIds(); }

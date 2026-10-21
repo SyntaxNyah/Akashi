@@ -43,8 +43,6 @@ class Result
     const T &operator*() const { return value(); }
     const T *operator->() const { return &value(); }
 
-    T valueOr(T f_fallback) const { return m_value.value_or(std::move(f_fallback)); }
-
     // NoError when ok().
     const ParseError &error() const { return m_error; }
 

@@ -99,8 +99,8 @@ void cmdLogin(CommandContext &f_context, const Args &)
 
 void cmdAddUser(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_username = f_args.token(QStringLiteral("username"));
-    const QString l_password = f_args.token(QStringLiteral("password"));
+    const QString l_username = f_args.text(QStringLiteral("username"));
+    const QString l_password = f_args.text(QStringLiteral("password"));
     if (!checkPasswordRequirements(f_context.server()->serverSettings(), l_username, l_password)) {
         f_context.reply("Password does not meet server requirements.");
         return;
@@ -116,7 +116,7 @@ void cmdAddUser(CommandContext &f_context, const Args &f_args)
 
 void cmdRemoveUser(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_username = f_args.token(QStringLiteral("username"));
+    const QString l_username = f_args.text(QStringLiteral("username"));
     if (f_context.server()->databaseManager()->deleteUser(l_username))
         f_context.reply("Successfully removed user " + l_username + ".");
     else
@@ -151,7 +151,7 @@ void cmdListPermsSelf(CommandContext &f_context, const Args &)
 
 void cmdListPermsUser(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_username = f_args.token(QStringLiteral("username"));
+    const QString l_username = f_args.text(QStringLiteral("username"));
     const QString l_acl_id = f_context.server()->databaseManager()->acl(l_username);
     if (l_acl_id.isEmpty()) {
         f_context.reply(l_username + " wasn't found!");
@@ -167,8 +167,8 @@ void cmdListPermsUser(CommandContext &f_context, const Args &f_args)
 // accepts SUPER at all.
 void cmdSetPerms(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_target_acl = f_args.role(QStringLiteral("role"));
-    const QString l_target_username = f_args.token(QStringLiteral("username"));
+    const QString l_target_acl = f_args.text(QStringLiteral("role"));
+    const QString l_target_username = f_args.text(QStringLiteral("username"));
     if (l_target_username == "root") {
         f_context.reply("You can't change root's role!");
         return;
@@ -182,7 +182,7 @@ void cmdSetPerms(CommandContext &f_context, const Args &f_args)
 
 void cmdRemovePerms(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_username = f_args.token(QStringLiteral("username"));
+    const QString l_username = f_args.text(QStringLiteral("username"));
     if (l_username == "root") {
         f_context.reply("You can't change root's role!");
         return;
@@ -233,12 +233,12 @@ void cmdChangePassSelf(CommandContext &f_context, const Args &f_args)
         f_context.reply("You do not have permission to use that command. You must be logged in.");
         return;
     }
-    changePassword(f_context, f_context.moderatorName(), f_args.token(QStringLiteral("password")));
+    changePassword(f_context, f_context.moderatorName(), f_args.text(QStringLiteral("password")));
 }
 
 void cmdChangePassUser(CommandContext &f_context, const Args &f_args)
 {
-    changePassword(f_context, f_args.token(QStringLiteral("username")), f_args.token(QStringLiteral("password")));
+    changePassword(f_context, f_args.text(QStringLiteral("username")), f_args.text(QStringLiteral("password")));
 }
 
 void registerAuthenticationCommands(CommandRegistry &f_registry)

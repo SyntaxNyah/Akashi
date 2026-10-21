@@ -304,7 +304,7 @@ static void kickToArea(CommandContext &f_context, akashi::ClientSession *f_targe
 // this area, and not one of its CMs.
 static void cmdAreaKickOne(CommandContext &f_context, const Args &f_args)
 {
-    const int l_to = f_args.has(QStringLiteral("destination")) ? f_args.area(QStringLiteral("destination")) : 0;
+    const int l_to = f_args.has(QStringLiteral("destination")) ? f_args.number(QStringLiteral("destination")) : 0;
     akashi::ClientSession *l_target = f_args.client(QStringLiteral("target"));
     kickToArea(f_context, l_target, l_to);
     f_context.reply("Client " + QString::number(l_target->clientId()) + " kicked to area " + f_context.server()->areaById(l_to)->displayName() + ".");
@@ -314,7 +314,7 @@ static void cmdAreaKickOne(CommandContext &f_context, const Args &f_args)
 // area's CMs.
 static void cmdAreaKickAll(CommandContext &f_context, const Args &f_args)
 {
-    const int l_to = f_args.has(QStringLiteral("destination")) ? f_args.area(QStringLiteral("destination")) : 0;
+    const int l_to = f_args.has(QStringLiteral("destination")) ? f_args.number(QStringLiteral("destination")) : 0;
     const QList<int> l_owners = f_context.area()->owners();
     const QVector<akashi::ClientSession *> l_clients = f_context.server()->clients();
     for (akashi::ClientSession *l_client : l_clients) {

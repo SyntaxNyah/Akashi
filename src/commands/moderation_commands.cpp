@@ -58,9 +58,9 @@ void cmdBan(CommandContext &f_context, const Args &f_args)
 {
     const QString l_args_str = f_args.text(QStringLiteral("reason"));
     // The "perma" form gives the word, the other a checked duration.
-    const long long l_duration_seconds = f_args.word(QStringLiteral("duration")) == QLatin1String("perma")
+    const long long l_duration_seconds = f_args.text(QStringLiteral("duration")) == QLatin1String("perma")
                                              ? -2
-                                             : f_args.duration(QStringLiteral("duration"));
+                                             : f_args.number(QStringLiteral("duration"));
 
     QString l_moderator;
     switch (f_context.server()->authType()) {
@@ -72,7 +72,7 @@ void cmdBan(CommandContext &f_context, const Args &f_args)
         break;
     }
 
-    const QString l_ipid = f_args.token(QStringLiteral("ipid"));
+    const QString l_ipid = f_args.text(QStringLiteral("ipid"));
     const auto l_result = f_context.server()->banPlayers(
         l_ipid, l_duration_seconds, l_args_str, l_moderator, QStringLiteral("Permanently."),
         [&l_args_str](int f_ban_id, const QString &f_until) {
@@ -92,7 +92,7 @@ void cmdBan(CommandContext &f_context, const Args &f_args)
 // kick verb.
 void cmdKick(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_target_ipid = f_args.token(QStringLiteral("ipid"));
+    const QString l_target_ipid = f_args.text(QStringLiteral("ipid"));
     const QString l_reason = f_args.text(QStringLiteral("reason"));
 
     const QList<akashi::ClientSession *> l_targets = f_context.server()->clientsByIpid(l_target_ipid);
@@ -244,7 +244,7 @@ void cmdHelp(CommandContext &f_context, const Args &f_args)
         return;
     }
 
-    QString l_command_name = f_args.token(QStringLiteral("command")).toLower();
+    QString l_command_name = f_args.text(QStringLiteral("command")).toLower();
 
     auto l_check_permission = [&f_context, l_registry](const QString &f_command_name) -> bool {
         return l_registry->canUse(f_command_name, callerPermissions(f_context));
@@ -404,7 +404,7 @@ void cmdWhy(CommandContext &f_context, const Args &f_args)
 {
     // The target form asks about another player.
     akashi::ClientSession *l_subject = f_args.has(QStringLiteral("target")) ? f_args.client(QStringLiteral("target")) : f_context.self();
-    QString l_query = f_args.token(QStringLiteral("query"));
+    QString l_query = f_args.text(QStringLiteral("query"));
     l_query = l_query.toLower();
     if (l_query.startsWith(QLatin1Char('/')))
         l_query.remove(0, 1);
@@ -505,7 +505,7 @@ void cmdBans(CommandContext &f_context, const Args &)
 
 void cmdUnban(CommandContext &f_context, const Args &f_args)
 {
-    const int l_target_ban = f_args.integer(QStringLiteral("ban_id"));
+    const int l_target_ban = f_args.number(QStringLiteral("ban_id"));
     if (f_context.server()->databaseManager()->invalidateBan(l_target_ban))
         f_context.reply("Successfully invalidated ban " + QString::number(l_target_ban) + ".");
     else
@@ -514,9 +514,9 @@ void cmdUnban(CommandContext &f_context, const Args &f_args)
 
 void cmdLiftSanction(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_ipid = f_args.token(QStringLiteral("ipid"));
+    const QString l_ipid = f_args.text(QStringLiteral("ipid"));
     // Plugin sanctions are plain strings too, so any word is looked up.
-    const QString l_sanction = f_args.token(QStringLiteral("sanction")).toLower();
+    const QString l_sanction = f_args.text(QStringLiteral("sanction")).toLower();
     if (!f_context.server()->databaseManager()->sanctionRow(l_ipid, l_sanction).has_value()) {
         f_context.reply("No stored \"" + l_sanction + "\" sanction for that IPID.");
         return;
@@ -532,7 +532,7 @@ void cmdAbout(CommandContext &f_context, const Args &f_args)
     const QMap<QString, QString> l_abouts = l_plugins ? l_plugins->abouts() : QMap<QString, QString>();
 
     if (f_args.has(QStringLiteral("plugin"))) {
-        const QString l_name = f_args.token(QStringLiteral("plugin"));
+        const QString l_name = f_args.text(QStringLiteral("plugin"));
         if (l_name.compare(QStringLiteral("akashi"), Qt::CaseInsensitive) == 0)
             f_context.sendPacket("CT", {"The akashi dev team", l_akashi_about});
         else if (l_abouts.contains(l_name))
@@ -700,11 +700,11 @@ void cmdAllowBlankposting(CommandContext &f_context, const Args &)
 
 void cmdBanInfo(CommandContext &f_context, const Args &f_args)
 {
-    const QString l_id = f_args.token(QStringLiteral("id"));
+    const QString l_id = f_args.text(QStringLiteral("id"));
     QStringList l_ban_info;
     l_ban_info << ("Ban Info for " + l_id);
     l_ban_info << "-----";
-    const QString l_lookup_type = f_args.has(QStringLiteral("type")) ? f_args.word(QStringLiteral("type")) : QStringLiteral("banid");
+    const QString l_lookup_type = f_args.has(QStringLiteral("type")) ? f_args.text(QStringLiteral("type")) : QStringLiteral("banid");
     const QList<DBManager::BanInfo> l_bans = f_context.server()->databaseManager()->banInfo(l_lookup_type, l_id);
     for (const DBManager::BanInfo &l_ban : l_bans) {
         QString l_banned_until;
@@ -774,16 +774,16 @@ void cmdKickUid(CommandContext &f_context, const Args &f_args)
 // the field is a fixed word per form, so its value arrives checked.
 void cmdUpdateBan(CommandContext &f_context, const Args &f_args)
 {
-    const int l_ban_id = f_args.integer(QStringLiteral("ban_id"));
-    const QString l_field = f_args.word(QStringLiteral("field"));
+    const int l_ban_id = f_args.number(QStringLiteral("ban_id"));
+    const QString l_field = f_args.text(QStringLiteral("field"));
     QVariant l_updated_info;
     if (l_field == QLatin1String("reason")) {
         l_updated_info = QVariant(f_args.text(QStringLiteral("reason")));
     }
     else {
-        const long long l_duration_seconds = f_args.word(QStringLiteral("duration")) == QLatin1String("perma")
+        const long long l_duration_seconds = f_args.text(QStringLiteral("duration")) == QLatin1String("perma")
                                                  ? -2
-                                                 : f_args.duration(QStringLiteral("duration"));
+                                                 : f_args.number(QStringLiteral("duration"));
         l_updated_info = QVariant(l_duration_seconds);
     }
     if (!f_context.server()->databaseManager()->updateBan(l_ban_id, l_field, l_updated_info)) {

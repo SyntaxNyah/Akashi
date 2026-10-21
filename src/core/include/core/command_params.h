@@ -34,17 +34,15 @@ class AKASHI_CORE_EXPORT ParamScope
     virtual bool clientCan(ClientSession *f_client, const QString &f_permission) const = 0;
     // True when the client owns (is CM of) the area the invoker stands in.
     virtual bool ownsInvokerArea(ClientSession *f_client) const = 0;
-    // A server setting a limit may depend on, by name ("max_dice").
-    virtual int setting(const QString &f_name) const = 0;
     // The role ids accounts may hold, in their canonical spelling.
     virtual QStringList roleIds() const = 0;
 };
 
 // One declared parameter of a command form. Built with the param::
 // functions and chained options:
-//   param::client("target").notSelf().inArea().immuneIfAreaOwner()
+//   param::client("target").inArea().immuneIfAreaOwner()
 //   param::integer("sides", 1, 100).optional()
-//   param::text("reason").optional().maxLength(200).sensitive()
+//   param::text("reason").optional().max(200).sensitive()
 // Each kind reads through the matching akashi.helpers reader, so a
 // refusal is that reader's ParseError.
 class AKASHI_CORE_EXPORT Param
@@ -53,14 +51,12 @@ class AKASHI_CORE_EXPORT Param
     enum class Kind
     {
         Client,
-        Area,
         Integer,
         Word,
         Duration,
         Dice,
         Text,
         Token,
-        Role,
         When,
     };
 
@@ -72,33 +68,24 @@ class AKASHI_CORE_EXPORT Param
     // Options for every kind.
     Param optional() const;
     Param sensitive() const;
-    // Client: refuse the asker, or anyone outside the asker's area.
-    Param notSelf() const;
+    // Client: refuse anyone outside the asker's area.
     Param inArea() const;
     // Client: refuse targets holding the permission (unless the asker
     // holds super), or targets that own the asker's area.
     Param immuneIf(const QString &f_permission) const;
     Param immuneIfAreaOwner() const;
-    // Integer, Duration, Text: the upper limit, fixed or from the server.
+    // Integer, Duration: the upper limit. Text, Token: the most characters.
     Param max(qint64 f_max) const;
     Param max(Limit f_max) const;
-    // Text: the most characters accepted.
-    Param maxLength(int f_length) const;
-    // Role: leave these roles out - another form, gated on more, takes them.
-    Param without(const QStringList &f_roles) const;
-    // Dice: the most dice and sides, fixed or from the server.
-    Param diceLimits(Limit f_max_count, Limit f_max_sides) const;
+    // Word: leave these words out - another form, gated on more, takes them.
+    Param without(const QStringList &f_words) const;
 
     Kind kind() const { return m_kind; }
     QString name() const { return m_name; }
     bool isOptional() const { return m_optional; }
     bool isSensitive() const { return m_sensitive; }
-    // Text and When read the rest of the line, so they come last.
-    bool takesRestOfLine() const { return m_kind == Kind::Text || m_kind == Kind::When; }
     QString immunePermission() const { return m_immune_permission; }
     bool isImmuneIfAreaOwner() const { return m_immune_area_owner; }
-    // How the parameter reads in a usage line: <target>, [reason...], all.
-    QString placeholder() const;
 
   private:
     // Builds and reads parameters; internal to command_params.cpp.
@@ -106,33 +93,37 @@ class AKASHI_CORE_EXPORT Param
 
     Kind m_kind;
     QString m_name;
+    QString m_subject; // what a refusal calls the value; the name unless set
     bool m_optional = false;
     bool m_sensitive = false;
-    bool m_not_self = false;
     bool m_in_area = false;
     QString m_immune_permission;
     bool m_immune_area_owner = false;
     qint64 m_min = 0;
     Limit m_max;
     QStringList m_words;
+    // Word: the words, when they are only known at reading time.
+    std::function<QStringList(const ParamScope &)> m_word_source;
+    QStringList m_excluded;
     Limit m_max_count;
     Limit m_max_sides;
-    QStringList m_excluded;
 };
 
 namespace param {
 AKASHI_CORE_EXPORT Param client(const QString &f_name);
-AKASHI_CORE_EXPORT Param area(const QString &f_name);
 AKASHI_CORE_EXPORT Param integer(const QString &f_name, qint64 f_min, qint64 f_max);
+// An integer naming one of the server's areas.
+AKASHI_CORE_EXPORT Param area(const QString &f_name);
 AKASHI_CORE_EXPORT Param word(const QString &f_name, const QStringList &f_words);
 AKASHI_CORE_EXPORT Param duration(const QString &f_name);
-AKASHI_CORE_EXPORT Param dice(const QString &f_name);
+// Dice notation like 2d6+1, within the most dice and sides given.
+AKASHI_CORE_EXPORT Param dice(const QString &f_name, Param::Limit f_max_count, Param::Limit f_max_sides);
 // The rest of the line, joined by spaces. Must be the form's last parameter.
 AKASHI_CORE_EXPORT Param text(const QString &f_name);
-// One argument as typed - a username, a password. maxLength() bounds it.
+// One argument as typed - a username, a password. max() bounds its length.
 AKASHI_CORE_EXPORT Param token(const QString &f_name);
-// One of the server's role ids, compared without case and answered in its
-// canonical spelling, so "super" reads as SUPER.
+// A word naming one of the server's roles, compared without case and
+// answered in its canonical spelling, so "super" reads as SUPER.
 AKASHI_CORE_EXPORT Param role(const QString &f_name);
 // A future moment, read from the rest of the line: a duration ("1d12h"),
 // a weekday, or a date like "01.01.2028 18:00". Must be the last parameter.
@@ -149,14 +140,11 @@ class AKASHI_CORE_EXPORT Args
 
     ClientSession *client(const QString &f_name) const;
     TargetPlayer target(const QString &f_name) const;
-    int area(const QString &f_name) const;
-    int integer(const QString &f_name) const;
-    QString word(const QString &f_name) const;
-    qint64 duration(const QString &f_name) const;
-    helpers::Dice dice(const QString &f_name) const;
+    // Integer, area and duration (in seconds) values.
+    qint64 number(const QString &f_name) const;
+    // Word, role, token and text values.
     QString text(const QString &f_name) const;
-    QString token(const QString &f_name) const;
-    QString role(const QString &f_name) const;
+    helpers::Dice dice(const QString &f_name) const;
     QDateTime when(const QString &f_name) const;
 
   private:

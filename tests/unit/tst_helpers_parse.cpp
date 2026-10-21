@@ -35,7 +35,6 @@ class tst_HelpersParse : public QObject
     void joinFrom();
     void limitLength_data();
     void limitLength();
-    void resultValueOr();
     void errorString_data();
     void errorString();
     void subjectLabel_data();
@@ -364,12 +363,6 @@ void tst_HelpersParse::limitLength()
     if (!l_result) {
         QCOMPARE(l_result.error().max, max);
     }
-}
-
-void tst_HelpersParse::resultValueOr()
-{
-    QCOMPARE(akashi::helpers::parseInt(QStringLiteral("8"), QStringLiteral("number")).valueOr(-1), 8);
-    QCOMPARE(akashi::helpers::parseInt(QStringLiteral("x"), QStringLiteral("number")).valueOr(-1), -1);
 }
 
 // The one table that knows the English words: one row per code. A wording

@@ -24,12 +24,42 @@ class FormReader
         return l_param;
     }
 
+    static Param area(const QString &f_name)
+    {
+        Param l_param(Param::Kind::Integer, f_name);
+        l_param.m_subject = QStringLiteral("area_id");
+        l_param.m_max = [](const ParamScope &f_scope) { return qint64(f_scope.areaCount() - 1); };
+        return l_param;
+    }
+
     static Param word(const QString &f_name, const QStringList &f_words)
     {
         Param l_param(Param::Kind::Word, f_name);
         l_param.m_words = f_words;
         return l_param;
     }
+
+    static Param role(const QString &f_name)
+    {
+        Param l_param(Param::Kind::Word, f_name);
+        l_param.m_subject = QStringLiteral("role");
+        l_param.m_word_source = [](const ParamScope &f_scope) { return f_scope.roleIds(); };
+        return l_param;
+    }
+
+    static Param dice(const QString &f_name, Param::Limit f_max_count, Param::Limit f_max_sides)
+    {
+        Param l_param(Param::Kind::Dice, f_name);
+        l_param.m_max_count = std::move(f_max_count);
+        l_param.m_max_sides = std::move(f_max_sides);
+        return l_param;
+    }
+
+    // Text and When read the rest of the line, so they come last.
+    static bool takesRestOfLine(const Param &f_param) { return f_param.m_kind == Param::Kind::Text || f_param.m_kind == Param::Kind::When; }
+
+    // How the parameter reads in a usage line: <target>, [reason...], all.
+    static QString placeholder(const Param &f_param);
 
     static FormReading read(const QList<Param> &f_params, const QStringList &f_arguments, const ParamScope &f_scope);
 
@@ -43,7 +73,8 @@ class FormReader
 
 Param::Param(Kind f_kind, const QString &f_name) :
     m_kind(f_kind),
-    m_name(f_name)
+    m_name(f_name),
+    m_subject(f_name)
 {}
 
 Param Param::optional() const
@@ -57,13 +88,6 @@ Param Param::sensitive() const
 {
     Param l_copy = *this;
     l_copy.m_sensitive = true;
-    return l_copy;
-}
-
-Param Param::notSelf() const
-{
-    Param l_copy = *this;
-    l_copy.m_not_self = true;
     return l_copy;
 }
 
@@ -100,56 +124,40 @@ Param Param::max(Limit f_max) const
     return l_copy;
 }
 
-Param Param::maxLength(int f_length) const
-{
-    return max(qint64(f_length));
-}
-
-Param Param::without(const QStringList &f_roles) const
+Param Param::without(const QStringList &f_words) const
 {
     Param l_copy = *this;
-    l_copy.m_excluded = f_roles;
+    l_copy.m_excluded = f_words;
     return l_copy;
 }
 
-Param Param::diceLimits(Limit f_max_count, Limit f_max_sides) const
+QString FormReader::placeholder(const Param &f_param)
 {
-    Param l_copy = *this;
-    l_copy.m_max_count = std::move(f_max_count);
-    l_copy.m_max_sides = std::move(f_max_sides);
-    return l_copy;
-}
-
-QString Param::placeholder() const
-{
+    // Words known only at reading time are shown by the parameter's name.
+    const bool l_fixed_words = f_param.m_kind == Param::Kind::Word && !f_param.m_word_source;
     QString l_inner;
-    if (m_kind == Kind::Word && m_words.size() == 1) {
+    if (l_fixed_words && f_param.m_words.size() == 1) {
         // A single fixed word is typed as it is: "/area_kick all".
-        l_inner = m_words.first();
-        return m_optional ? "[" + l_inner + "]" : l_inner;
+        l_inner = f_param.m_words.first();
+        return f_param.m_optional ? "[" + l_inner + "]" : l_inner;
     }
-    if (m_kind == Kind::Word) {
-        l_inner = m_words.join(QLatin1Char('|'));
-    }
-    else {
-        l_inner = m_name;
-    }
-    if (takesRestOfLine()) {
+    l_inner = l_fixed_words ? f_param.m_words.join(QLatin1Char('|')) : f_param.m_name;
+    if (takesRestOfLine(f_param)) {
         l_inner += QStringLiteral("...");
     }
-    return m_optional ? "[" + l_inner + "]" : "<" + l_inner + ">";
+    return f_param.m_optional ? "[" + l_inner + "]" : "<" + l_inner + ">";
 }
 
 namespace param {
 Param client(const QString &f_name) { return Param(Param::Kind::Client, f_name); }
-Param area(const QString &f_name) { return Param(Param::Kind::Area, f_name); }
 Param integer(const QString &f_name, qint64 f_min, qint64 f_max) { return FormReader::integer(f_name, f_min, f_max); }
+Param area(const QString &f_name) { return FormReader::area(f_name); }
 Param word(const QString &f_name, const QStringList &f_words) { return FormReader::word(f_name, f_words); }
 Param duration(const QString &f_name) { return Param(Param::Kind::Duration, f_name); }
-Param dice(const QString &f_name) { return Param(Param::Kind::Dice, f_name); }
+Param dice(const QString &f_name, Param::Limit f_max_count, Param::Limit f_max_sides) { return FormReader::dice(f_name, std::move(f_max_count), std::move(f_max_sides)); }
 Param text(const QString &f_name) { return Param(Param::Kind::Text, f_name); }
 Param token(const QString &f_name) { return Param(Param::Kind::Token, f_name); }
-Param role(const QString &f_name) { return Param(Param::Kind::Role, f_name); }
+Param role(const QString &f_name) { return FormReader::role(f_name); }
 Param when(const QString &f_name) { return Param(Param::Kind::When, f_name); }
 } // namespace param
 
@@ -160,14 +168,9 @@ bool Args::has(const QString &f_name) const
 
 ClientSession *Args::client(const QString &f_name) const { return m_clients.value(f_name); }
 TargetPlayer Args::target(const QString &f_name) const { return TargetPlayer(m_clients.value(f_name)); }
-int Args::area(const QString &f_name) const { return int(m_numbers.value(f_name, -1)); }
-int Args::integer(const QString &f_name) const { return int(m_numbers.value(f_name)); }
-QString Args::word(const QString &f_name) const { return m_texts.value(f_name); }
-qint64 Args::duration(const QString &f_name) const { return m_numbers.value(f_name); }
-helpers::Dice Args::dice(const QString &f_name) const { return m_dice.value(f_name); }
+qint64 Args::number(const QString &f_name) const { return m_numbers.value(f_name); }
 QString Args::text(const QString &f_name) const { return m_texts.value(f_name); }
-QString Args::token(const QString &f_name) const { return m_texts.value(f_name); }
-QString Args::role(const QString &f_name) const { return m_texts.value(f_name); }
+helpers::Dice Args::dice(const QString &f_name) const { return m_dice.value(f_name); }
 QDateTime Args::when(const QString &f_name) const { return m_times.value(f_name); }
 
 std::optional<ParseError> FormReader::readOne(const Param &f_param, const QString &f_text, const ParamScope &f_scope, Args &f_args)
@@ -176,8 +179,6 @@ std::optional<ParseError> FormReader::readOne(const Param &f_param, const QStrin
     case Param::Kind::Client:
     {
         PlayerFilter l_filter;
-        if (f_param.m_not_self)
-            l_filter.exclude_id = f_scope.invokerId();
         if (f_param.m_in_area)
             l_filter.in_area = f_scope.invokerArea();
         const auto l_found = f_scope.findClient(f_text, l_filter);
@@ -190,18 +191,10 @@ std::optional<ParseError> FormReader::readOne(const Param &f_param, const QStrin
         f_args.m_clients.insert(f_param.m_name, l_client);
         return std::nullopt;
     }
-    case Param::Kind::Area:
-    {
-        const auto l_area = helpers::parseInt(f_text, QStringLiteral("area_id"), 0, f_scope.areaCount() - 1);
-        if (!l_area)
-            return l_area.error();
-        f_args.m_numbers.insert(f_param.m_name, *l_area);
-        return std::nullopt;
-    }
     case Param::Kind::Integer:
     {
         const qint64 l_max = f_param.m_max ? f_param.m_max(f_scope) : std::numeric_limits<int>::max();
-        const auto l_number = helpers::parseInt(f_text, f_param.m_name, int(f_param.m_min), int(l_max));
+        const auto l_number = helpers::parseInt(f_text, f_param.m_subject, int(f_param.m_min), int(l_max));
         if (!l_number)
             return l_number.error();
         f_args.m_numbers.insert(f_param.m_name, *l_number);
@@ -209,7 +202,10 @@ std::optional<ParseError> FormReader::readOne(const Param &f_param, const QStrin
     }
     case Param::Kind::Word:
     {
-        const auto l_word = helpers::parseWord(f_text, f_param.m_words, f_param.m_name);
+        QStringList l_words = f_param.m_word_source ? f_param.m_word_source(f_scope) : f_param.m_words;
+        for (const QString &l_excluded : f_param.m_excluded)
+            l_words.removeAll(l_excluded);
+        const auto l_word = helpers::parseWord(f_text, l_words, f_param.m_subject);
         if (!l_word)
             return l_word.error();
         f_args.m_texts.insert(f_param.m_name, *l_word);
@@ -226,9 +222,7 @@ std::optional<ParseError> FormReader::readOne(const Param &f_param, const QStrin
     }
     case Param::Kind::Dice:
     {
-        const int l_max_count = f_param.m_max_count ? int(f_param.m_max_count(f_scope)) : f_scope.setting(QStringLiteral("max_dice"));
-        const int l_max_sides = f_param.m_max_sides ? int(f_param.m_max_sides(f_scope)) : f_scope.setting(QStringLiteral("max_value"));
-        const auto l_dice = helpers::parseDice(f_text, l_max_count, l_max_sides);
+        const auto l_dice = helpers::parseDice(f_text, int(f_param.m_max_count(f_scope)), int(f_param.m_max_sides(f_scope)));
         if (!l_dice)
             return l_dice.error();
         f_args.m_dice.insert(f_param.m_name, *l_dice);
@@ -242,17 +236,6 @@ std::optional<ParseError> FormReader::readOne(const Param &f_param, const QStrin
                 return l_token.error();
         }
         f_args.m_texts.insert(f_param.m_name, f_text);
-        return std::nullopt;
-    }
-    case Param::Kind::Role:
-    {
-        QStringList l_roles = f_scope.roleIds();
-        for (const QString &l_excluded : f_param.m_excluded)
-            l_roles.removeAll(l_excluded);
-        const auto l_role = helpers::parseWord(f_text, l_roles, QStringLiteral("role"));
-        if (!l_role)
-            return l_role.error();
-        f_args.m_texts.insert(f_param.m_name, *l_role);
         return std::nullopt;
     }
     case Param::Kind::When:
@@ -291,7 +274,7 @@ FormReading FormReader::read(const QList<Param> &f_params, const QStringList &f_
             l_reading.score = score(i, false);
             return l_reading;
         }
-        const bool l_rest = l_param.takesRestOfLine();
+        const bool l_rest = takesRestOfLine(l_param);
         const QString l_text = l_rest ? helpers::joinFrom(f_arguments, l_next) : f_arguments.at(l_next);
         if (const auto l_error = readOne(l_param, l_text, f_scope, l_args)) {
             l_reading.error = *l_error;
@@ -319,7 +302,7 @@ QString usageOf(const QString &f_command, const QList<Param> &f_params)
 {
     QString l_usage = "/" + f_command;
     for (const Param &l_param : f_params) {
-        l_usage += " " + l_param.placeholder();
+        l_usage += " " + FormReader::placeholder(l_param);
     }
     return l_usage;
 }
@@ -334,7 +317,7 @@ bool validParams(const QList<Param> &f_params)
             return false;
         }
         l_names.insert(l_param.name());
-        if (l_param.takesRestOfLine() && i != f_params.size() - 1) {
+        if (FormReader::takesRestOfLine(l_param) && i != f_params.size() - 1) {
             return false;
         }
         if (l_seen_optional && !l_param.isOptional()) {

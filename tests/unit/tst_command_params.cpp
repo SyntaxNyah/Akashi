@@ -52,7 +52,6 @@ class FakeScope : public akashi::ParamScope
         return client_permissions.value(f_client->clientId()).contains(f_permission);
     }
     bool ownsInvokerArea(akashi::ClientSession *f_client) const override { return area_owners.contains(f_client->clientId()); }
-    int setting(const QString &f_name) const override { return f_name == QLatin1String("max_dice") ? 10 : 100; }
     QStringList roleIds() const override { return {QStringLiteral("MODERATOR"), QStringLiteral("NONE"), QStringLiteral("SUPER")}; }
 
     akashi::ClientSession *client(int f_id) const { return m_clients.at(f_id); }
@@ -95,7 +94,7 @@ void tst_CommandParams::readsEveryKind()
         param::integer(QStringLiteral("count"), 1, 10),
         param::word(QStringLiteral("mode"), {QStringLiteral("on"), QStringLiteral("off")}),
         param::duration(QStringLiteral("for")),
-        param::dice(QStringLiteral("roll")),
+        param::dice(QStringLiteral("roll"), [](const akashi::ParamScope &) { return 10; }, [](const akashi::ParamScope &) { return 100; }),
         param::text(QStringLiteral("note")),
     };
     const QStringList l_arguments{"1", "3", "5", "ON", "1h30m", "2d6+1", "hello", "there"};
@@ -104,10 +103,10 @@ void tst_CommandParams::readsEveryKind()
     QVERIFY2(l_reading.args.has_value(), qPrintable(l_reading.error.errorString()));
     const Args &l_args = *l_reading.args;
     QCOMPARE(l_args.client(QStringLiteral("target")), l_scope.client(1));
-    QCOMPARE(l_args.area(QStringLiteral("destination")), 3);
-    QCOMPARE(l_args.integer(QStringLiteral("count")), 5);
-    QCOMPARE(l_args.word(QStringLiteral("mode")), QStringLiteral("on"));
-    QCOMPARE(l_args.duration(QStringLiteral("for")), qint64(5400));
+    QCOMPARE(l_args.number(QStringLiteral("destination")), qint64(3));
+    QCOMPARE(l_args.number(QStringLiteral("count")), qint64(5));
+    QCOMPARE(l_args.text(QStringLiteral("mode")), QStringLiteral("on"));
+    QCOMPARE(l_args.number(QStringLiteral("for")), qint64(5400));
     QCOMPARE(l_args.dice(QStringLiteral("roll")).count, 2);
     QCOMPARE(l_args.dice(QStringLiteral("roll")).modifier, 1);
     // The text parameter takes the rest of the line.
@@ -122,13 +121,13 @@ static QList<Param> formNamed(const QString &f_name)
     if (f_name == QLatin1String("optional"))
         return {param::integer(QStringLiteral("sides"), 1, 100).optional(), param::integer(QStringLiteral("dice"), 1, 10).optional()};
     if (f_name == QLatin1String("message"))
-        return {param::client(QStringLiteral("target")), param::text(QStringLiteral("message")).maxLength(10)};
+        return {param::client(QStringLiteral("target")), param::text(QStringLiteral("message")).max(10)};
     if (f_name == QLatin1String("sanction"))
         return {param::client(QStringLiteral("target")), param::when(QStringLiteral("until")).optional()};
     if (f_name == QLatin1String("account"))
-        return {param::token(QStringLiteral("username")), param::token(QStringLiteral("password")).maxLength(8)};
+        return {param::token(QStringLiteral("username")), param::token(QStringLiteral("password")).max(8)};
     if (f_name == QLatin1String("server_limit"))
-        return {param::integer(QStringLiteral("dice"), 1, 0).max([](const akashi::ParamScope &f_scope) { return qint64(f_scope.setting(QStringLiteral("max_dice"))); })};
+        return {param::integer(QStringLiteral("rooms"), 1, 0).max([](const akashi::ParamScope &f_scope) { return qint64(f_scope.areaCount()); })};
     return {};
 }
 
@@ -161,8 +160,8 @@ void tst_CommandParams::readForm_data()
     QTest::newRow("two tokens") << "account" << QStringList{"bob", "Secret1!"} << ParseError::NoError << 4;
     QTest::newRow("a token over its length") << "account" << QStringList{"bob", "Secret12!"} << ParseError::TextTooLong << 3;
     QTest::newRow("a token is one word") << "account" << QStringList{"bob", "Secret1!", "more"} << ParseError::ExtraValue << 4;
-    QTest::newRow("a limit from the server") << "server_limit" << QStringList{"10"} << ParseError::NoError << 2;
-    QTest::newRow("over a limit from the server") << "server_limit" << QStringList{"11"} << ParseError::OutOfRange << 1;
+    QTest::newRow("a limit from the server") << "server_limit" << QStringList{"4"} << ParseError::NoError << 2;
+    QTest::newRow("over a limit from the server") << "server_limit" << QStringList{"5"} << ParseError::OutOfRange << 1;
 }
 
 void tst_CommandParams::readForm()
@@ -187,8 +186,6 @@ void tst_CommandParams::clientFilters_data()
     QTest::addColumn<ParseError::Error>("error");
 
     QTest::newRow("anyone") << "0" << "" << false << ParseError::NoError;
-    QTest::newRow("not self refuses the invoker") << "0" << "not_self" << false << ParseError::IsSelf;
-    QTest::newRow("not self lets others through") << "1" << "not_self" << false << ParseError::NoError;
     QTest::newRow("in area refuses another area") << "2" << "in_area" << false << ParseError::NotInArea;
     QTest::newRow("in area lets this area through") << "1" << "in_area" << false << ParseError::NoError;
     QTest::newRow("immune by permission") << "1" << "immune_permission" << false << ParseError::Immune;
@@ -214,8 +211,6 @@ void tst_CommandParams::clientFilters()
         l_scope.invoker_permissions.insert(QStringLiteral("super"));
 
     Param l_param = param::client(QStringLiteral("target"));
-    if (options == QLatin1String("not_self"))
-        l_param = l_param.notSelf();
     if (options == QLatin1String("in_area"))
         l_param = l_param.inArea();
     if (options == QLatin1String("immune_permission"))
@@ -348,7 +343,7 @@ void tst_CommandParams::setpermsKeepsSuperBehindItsOwnForm()
     QCOMPARE(l_choice.form ? l_choice.form->id : QString(), form);
     QCOMPARE(l_choice.denied, denied);
     if (l_choice.form)
-        QCOMPARE(l_choice.args->role(QStringLiteral("role")), stored);
+        QCOMPARE(l_choice.args->text(QStringLiteral("role")), stored);
     if (form.isEmpty() && !denied) {
         // An unknown role lists the ones that may be given - never SUPER.
         QCOMPARE(l_choice.error.error, ParseError::UnknownWord);
