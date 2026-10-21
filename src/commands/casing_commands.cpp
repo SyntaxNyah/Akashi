@@ -2,6 +2,7 @@
 
 #include "akashi/area_rule.h"
 #include "akashi/filesystem_service.h"
+#include "akashi/helpers/parse.h"
 #include "akashi/permissions.h"
 #include "core/client_session.h"
 #include "core/command_context.h"
@@ -110,33 +111,28 @@ void cmdEvidenceSwap(CommandContext &f_context)
         return;
     }
 
-    bool ok, ok2;
-    int l_ev_id1 = f_context.argument(0).toInt(&ok);
-    int l_ev_id2 = f_context.argument(1).toInt(&ok2);
+    const auto l_first = helpers::parseInt(f_context.argument(0), QStringLiteral("evidence_id"), 0, l_ev_size);
+    if (!l_first) {
+        f_context.reply(l_first.error());
+        return;
+    }
+    const auto l_second = helpers::parseInt(f_context.argument(1), QStringLiteral("evidence_id"), 0, l_ev_size);
+    if (!l_second) {
+        f_context.reply(l_second.error());
+        return;
+    }
+    const int l_ev_id1 = *l_first;
+    const int l_ev_id2 = *l_second;
 
-    if (!ok || !ok2) {
-        f_context.reply("Invalid evidence ID.");
+    const QVariantMap l_payload = {{QStringLiteral("indexes"), QVariantList{l_ev_id1, l_ev_id2}}};
+    if (auto l_rule_block = checkCasingBeforeRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload)) {
+        f_context.reply(*l_rule_block);
         return;
     }
-    if (l_ev_id1 < 0 || l_ev_id2 < 0) {
-        f_context.reply("Evidence ID can't be negative.");
-        return;
-    }
-    if (l_ev_id2 <= l_ev_size && l_ev_id1 <= l_ev_size) {
-        const QVariantMap l_payload = {{QStringLiteral("indexes"), QVariantList{l_ev_id1, l_ev_id2}}};
-        if (auto l_rule_block = checkCasingBeforeRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload)) {
-            f_context.reply(*l_rule_block);
-            return;
-        }
-        l_area->swapEvidence(l_ev_id1, l_ev_id2);
-        akashi::ClientSession *l_self = f_context.self();
-        l_self->sendEvidenceList(l_area);
-        f_context.reply("The evidence " + QString::number(l_ev_id1) + " and " + QString::number(l_ev_id2) + " have been swapped.");
-        runCasingAfterRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload);
-    }
-    else {
-        f_context.reply("Unable to swap evidence. Evidence ID out of range.");
-    }
+    l_area->swapEvidence(l_ev_id1, l_ev_id2);
+    f_context.self()->sendEvidenceList(l_area);
+    f_context.reply("The evidence " + QString::number(l_ev_id1) + " and " + QString::number(l_ev_id2) + " have been swapped.");
+    runCasingAfterRule(f_context, akashi::AreaEvents::EvidenceEdited, l_payload);
 }
 
 void cmdTestify(CommandContext &f_context)

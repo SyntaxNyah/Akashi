@@ -1,5 +1,6 @@
 #include "commands/area_commands.h"
 
+#include "akashi/helpers/parse.h"
 #include "akashi/permissions.h"
 #include "core/client_session.h"
 #include "core/command_context.h"
@@ -74,20 +75,12 @@ void cmdGetAreas(CommandContext &f_context)
 
 void cmdArea(CommandContext &f_context)
 {
-    if (auto l_new_area = f_context.argumentAsInt(0)) {
-        ServerContext *l_server = f_context.server();
-        if (*l_new_area < 0 || *l_new_area >= l_server->areaCount()) {
-            f_context.reply("That does not look like a valid area ID.");
-            return;
-        }
-        akashi::ClientSession *l_client = f_context.self();
-        if (l_client) {
-            l_client->changeArea(*l_new_area);
-        }
+    const auto l_new_area = helpers::parseInt(f_context.argument(0), QStringLiteral("area_id"), 0, f_context.server()->areaCount() - 1);
+    if (!l_new_area) {
+        f_context.reply(l_new_area.error());
+        return;
     }
-    else {
-        f_context.reply("That does not look like a valid area ID.");
-    }
+    f_context.self()->changeArea(*l_new_area);
 }
 
 void cmdCm(CommandContext &f_context)
@@ -307,12 +300,12 @@ void cmdAreaKick(CommandContext &f_context)
     if (f_context.argc() >= 2) {
         // The cross-area form's gamemaster-AND-kick gate is the variant's
         // requirement group; only the argument shape is checked here.
-        bool ok;
-        target_area_id = f_context.argument(1).toInt(&ok);
-        if (!ok || target_area_id < 0 || target_area_id >= f_context.server()->areaCount()) {
-            f_context.reply("That does not look like a valid area ID.");
+        const auto l_parsed = helpers::parseInt(f_context.argument(1), QStringLiteral("area_id"), 0, f_context.server()->areaCount() - 1);
+        if (!l_parsed) {
+            f_context.reply(l_parsed.error());
             return;
         }
+        target_area_id = *l_parsed;
     }
 
     akashi::Area *target_area = f_context.server()->areaById(target_area_id);
@@ -514,15 +507,8 @@ void cmdFloor(CommandContext &f_context)
     ServerContext *l_server = f_context.server();
     QString l_arg = f_context.argument(0);
 
-    const akashi::Floor *l_floor = nullptr;
-    bool l_ok = false;
-    int l_id = l_arg.toInt(&l_ok);
-    if (l_ok) {
-        l_floor = l_server->floorById(l_id);
-    }
-    else {
-        l_floor = l_server->floorByName(l_arg);
-    }
+    const auto l_id = helpers::parseInt(l_arg, QStringLiteral("floor_id"));
+    const akashi::Floor *l_floor = l_id ? l_server->floorById(*l_id) : l_server->floorByName(l_arg);
 
     if (!l_floor) {
         f_context.reply("No floor found with that name or ID. Use /floors to list them.");
@@ -587,11 +573,9 @@ void cmdRenameFloor(CommandContext &f_context)
 void cmdRemoveArea(CommandContext &f_context)
 {
     ServerContext *l_server = f_context.server();
-    bool l_is_id = false;
-    int l_area_id = f_context.argument(0).toInt(&l_is_id);
-    if (!l_is_id) {
-        l_area_id = l_server->areaNames().indexOf(f_context.arguments().join(" "));
-    }
+    // An ID, or else the whole line as an area name.
+    const auto l_id = helpers::parseInt(f_context.argument(0), QStringLiteral("area_id"));
+    const int l_area_id = l_id ? *l_id : l_server->areaNames().indexOf(f_context.arguments().join(" "));
     const QString l_name = l_server->areaName(l_area_id);
     if (auto l_error = l_server->removeArea(l_area_id)) {
         f_context.reply(*l_error);
@@ -603,9 +587,8 @@ void cmdRemoveArea(CommandContext &f_context)
 void cmdRemoveFloor(CommandContext &f_context)
 {
     ServerContext *l_server = f_context.server();
-    bool l_is_id = false;
-    const int l_id = f_context.argument(0).toInt(&l_is_id);
-    const akashi::Floor *l_floor = l_is_id ? l_server->floorById(l_id) : l_server->floorByName(f_context.arguments().join(" "));
+    const auto l_id = helpers::parseInt(f_context.argument(0), QStringLiteral("floor_id"));
+    const akashi::Floor *l_floor = l_id ? l_server->floorById(*l_id) : l_server->floorByName(f_context.arguments().join(" "));
     if (!l_floor) {
         f_context.reply("No floor found with that name or ID. Use /floors to list them.");
         return;
@@ -641,9 +624,8 @@ void cmdSaveFloor(CommandContext &f_context)
     ServerContext *l_server = f_context.server();
     int l_floor_id = l_server->floorIdForArea(f_context.areaId());
     if (f_context.argc() > 0) {
-        bool l_is_id = false;
-        const int l_id = f_context.argument(0).toInt(&l_is_id);
-        const akashi::Floor *l_floor = l_is_id ? l_server->floorById(l_id) : l_server->floorByName(f_context.arguments().join(" "));
+        const auto l_id = helpers::parseInt(f_context.argument(0), QStringLiteral("floor_id"));
+        const akashi::Floor *l_floor = l_id ? l_server->floorById(*l_id) : l_server->floorByName(f_context.arguments().join(" "));
         if (!l_floor) {
             f_context.reply("No floor found with that name or ID. Use /floors to list them.");
             return;

@@ -430,20 +430,15 @@ void cmdForceCharSelect(CommandContext &f_context)
 
 void cmdA(CommandContext &f_context)
 {
-    bool ok;
-    int l_area_id = f_context.argument(0).toInt(&ok);
-    if (!ok) {
-        f_context.reply("This does not look like a valid AreaID.");
-        return;
-    }
-    // areaById() returns nullptr for any id outside the range, so an
-    // out-of-range (or negative) id would crash on the owners() call below.
-    if (l_area_id < 0 || l_area_id >= f_context.server()->areaCount()) {
-        f_context.reply("This does not look like a valid AreaID.");
+    // The range matters: areaById() answers nullptr outside it, which the
+    // owners() call below would dereference.
+    const auto l_area_id = helpers::parseInt(f_context.argument(0), QStringLiteral("area_id"), 0, f_context.server()->areaCount() - 1);
+    if (!l_area_id) {
+        f_context.reply(l_area_id.error());
         return;
     }
 
-    akashi::Area *l_area = f_context.server()->areaById(l_area_id);
+    akashi::Area *l_area = f_context.server()->areaById(*l_area_id);
     if (!l_area->owners().contains(f_context.clientId())) {
         f_context.reply("You are not CM in that area.");
         return;
@@ -453,7 +448,7 @@ void cmdA(CommandContext &f_context)
     l_argv.removeAt(0);
     QString l_sender_name = f_context.name();
     QString l_ooc_message = l_argv.join(" ");
-    f_context.server()->broadcast(akashi::Packet("CT", {"[CM]" + l_sender_name, l_ooc_message}), l_area_id);
+    f_context.server()->broadcast(akashi::Packet("CT", {"[CM]" + l_sender_name, l_ooc_message}), *l_area_id);
     announceGlobalMessage(f_context, QStringLiteral("cm"), l_ooc_message);
 }
 

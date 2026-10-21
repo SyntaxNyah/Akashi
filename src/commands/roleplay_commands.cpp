@@ -1,5 +1,6 @@
 #include "commands/roleplay_commands.h"
 
+#include "akashi/helpers/parse.h"
 #include "akashi/logging_categories.h"
 #include "akashi/permissions.h"
 #include "core/client_session.h"
@@ -13,8 +14,6 @@
 #include "world/area.h"
 
 #include <QTime>
-
-#include <algorithm>
 
 namespace akashi::commands {
 
@@ -72,68 +71,47 @@ void cmdCoinFlip(CommandContext &f_context)
     f_context.replyToArea(l_sender_name + " flipped a coin and got " + l_face + ".");
 }
 
-void cmdRoll(CommandContext &f_context)
+// /roll and /rollp share one reader: either dice notation ("2d6+1") or
+// the plain form "[sides] [dice]", both bounded by the server's limits.
+static void rollDice(CommandContext &f_context, bool f_private)
 {
+    const int l_max_sides = f_context.server()->serverSettings()->max_value();
+    const int l_max_dice = f_context.server()->serverSettings()->max_dice();
+
+    if (f_context.argc() >= 1 && f_context.argument(0).contains(QLatin1Char('d'), Qt::CaseInsensitive)) {
+        const auto l_dice = helpers::parseDice(f_context.argument(0), l_max_dice, l_max_sides);
+        if (!l_dice) {
+            f_context.reply(l_dice.error());
+            return;
+        }
+        diceThrower(f_context, l_dice->sides, l_dice->count, f_private, l_dice->modifier);
+        return;
+    }
+
     int l_sides = 6;
     int l_dice = 1;
-
     if (f_context.argc() >= 1) {
-        QString l_arg = f_context.argument(0);
-        if (l_arg.contains('d')) {
-            QStringList l_arguments = l_arg.split('d');
-
-            bool l_dice_ok;
-            bool l_sides_ok;
-            l_dice = l_arguments[0].toInt(&l_dice_ok);
-            l_sides = l_arguments[1].toInt(&l_sides_ok);
-
-            if (l_arg.contains('+')) {
-                bool l_mod_ok;
-                QStringList l_modifier = l_arguments[1].split('+');
-                if (l_modifier.size() < 2) {
-                    f_context.reply("Invalid dice notation.");
-                    return;
-                }
-                int modifier = l_modifier[1].toInt(&l_mod_ok);
-                l_sides = l_modifier[0].toInt(&l_sides_ok);
-
-                if (l_mod_ok && l_dice_ok && l_sides_ok)
-                    diceThrower(f_context, l_sides, l_dice, false, modifier);
-                else
-                    f_context.reply("Invalid dice notation.");
-                return;
-            }
-            else if (l_arg.contains('-')) {
-                bool l_mod_ok;
-                QStringList l_modifier = l_arguments[1].split('-');
-                if (l_modifier.size() < 2) {
-                    f_context.reply("Invalid dice notation.");
-                    return;
-                }
-                int modifier = l_modifier[1].toInt(&l_mod_ok);
-                l_sides = l_modifier[0].toInt(&l_sides_ok);
-
-                if (l_mod_ok && l_dice_ok && l_sides_ok)
-                    diceThrower(f_context, l_sides, l_dice, false, -modifier);
-                else
-                    f_context.reply("Invalid dice notation.");
-                return;
-            }
-            else if (l_dice_ok && l_sides_ok) {
-                diceThrower(f_context, l_sides, l_dice, false);
-                return;
-            }
-            else {
-                f_context.reply("Invalid dice notation.");
-                return;
-            }
+        const auto l_parsed = helpers::parseInt(f_context.argument(0), QStringLiteral("dice_sides"), 1, l_max_sides);
+        if (!l_parsed) {
+            f_context.reply(l_parsed.error());
+            return;
         }
-        else
-            l_sides = std::clamp(l_arg.toInt(), 1, f_context.server()->serverSettings()->max_value());
+        l_sides = *l_parsed;
     }
-    if (f_context.argc() == 2)
-        l_dice = std::clamp(f_context.argument(1).toInt(), 1, f_context.server()->serverSettings()->max_dice());
-    diceThrower(f_context, l_sides, l_dice, false);
+    if (f_context.argc() >= 2) {
+        const auto l_parsed = helpers::parseInt(f_context.argument(1), QStringLiteral("dice_count"), 1, l_max_dice);
+        if (!l_parsed) {
+            f_context.reply(l_parsed.error());
+            return;
+        }
+        l_dice = *l_parsed;
+    }
+    diceThrower(f_context, l_sides, l_dice, f_private);
+}
+
+void cmdRoll(CommandContext &f_context)
+{
+    rollDice(f_context, false);
 }
 
 void cmdRollA(CommandContext &f_context)
@@ -153,66 +131,7 @@ void cmdRollA(CommandContext &f_context)
 
 void cmdRollP(CommandContext &f_context)
 {
-    int l_sides = 6;
-    int l_dice = 1;
-
-    if (f_context.argc() >= 1) {
-        QString l_arg = f_context.argument(0);
-        if (l_arg.contains('d')) {
-            QStringList l_arguments = l_arg.split('d');
-
-            bool l_dice_ok;
-            bool l_sides_ok;
-            l_dice = l_arguments[0].toInt(&l_dice_ok);
-            l_sides = l_arguments[1].toInt(&l_sides_ok);
-
-            if (l_arg.contains('+')) {
-                bool l_mod_ok;
-                QStringList l_modifier = l_arguments[1].split('+');
-                if (l_modifier.size() < 2) {
-                    f_context.reply("Invalid dice notation.");
-                    return;
-                }
-                int modifier = l_modifier[1].toInt(&l_mod_ok);
-                l_sides = l_modifier[0].toInt(&l_sides_ok);
-
-                if (l_mod_ok && l_dice_ok && l_sides_ok)
-                    diceThrower(f_context, l_sides, l_dice, true, modifier);
-                else
-                    f_context.reply("Invalid dice notation.");
-                return;
-            }
-            else if (l_arg.contains('-')) {
-                bool l_mod_ok;
-                QStringList l_modifier = l_arguments[1].split('-');
-                if (l_modifier.size() < 2) {
-                    f_context.reply("Invalid dice notation.");
-                    return;
-                }
-                int modifier = l_modifier[1].toInt(&l_mod_ok);
-                l_sides = l_modifier[0].toInt(&l_sides_ok);
-
-                if (l_mod_ok && l_dice_ok && l_sides_ok)
-                    diceThrower(f_context, l_sides, l_dice, true, -modifier);
-                else
-                    f_context.reply("Invalid dice notation.");
-                return;
-            }
-            else if (l_dice_ok && l_sides_ok) {
-                diceThrower(f_context, l_sides, l_dice, true);
-                return;
-            }
-            else {
-                f_context.reply("Invalid dice notation.");
-                return;
-            }
-        }
-        else
-            l_sides = std::clamp(l_arg.toInt(), 1, f_context.server()->serverSettings()->max_value());
-    }
-    if (f_context.argc() == 2)
-        l_dice = std::clamp(f_context.argument(1).toInt(), 1, f_context.server()->serverSettings()->max_dice());
-    diceThrower(f_context, l_sides, l_dice, true);
+    rollDice(f_context, true);
 }
 
 void cmdTimer(CommandContext &f_context)
@@ -229,12 +148,12 @@ void cmdTimer(CommandContext &f_context)
         return;
     }
 
-    bool ok;
-    int l_timer_id = f_context.argument(0).toInt(&ok);
-    if (!ok || l_timer_id < 0 || l_timer_id > 4) {
-        f_context.reply("Invalid timer ID. Timer ID must be a whole number between 0 and 4.");
+    const auto l_parsed_id = helpers::parseInt(f_context.argument(0), QStringLiteral("timer_id"), 0, 4);
+    if (!l_parsed_id) {
+        f_context.reply(l_parsed_id.error());
         return;
     }
+    const int l_timer_id = *l_parsed_id;
 
     if (f_context.argc() == 1) {
         f_context.reply(areaTimer(f_context, l_area->id(), l_timer_id));

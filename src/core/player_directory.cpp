@@ -108,19 +108,28 @@ akashi::ClientSession *PlayerDirectory::clientById(int f_id) const
 helpers::Result<akashi::ClientSession *> PlayerDirectory::find(const QString &f_text, const PlayerFilter &f_filter) const
 {
     using Found = helpers::Result<akashi::ClientSession *>;
-    const helpers::Result<int> l_id = helpers::parseInt(f_text, QStringLiteral("client ID"));
+    const helpers::Result<int> l_id = helpers::parseInt(f_text, QStringLiteral("client_id"));
     if (!l_id) {
         return Found::failure(l_id.error());
     }
+
+    // Refusals past this point name the ID as read, so "007" reports as 7.
+    helpers::ParseError l_error;
+    l_error.input = QString::number(*l_id);
+    l_error.subject = QStringLiteral("client_id");
+
     akashi::ClientSession *l_client = clientById(*l_id);
     if (!l_client) {
-        return Found::failure(QStringLiteral("No client with ID %1 is connected.").arg(*l_id));
+        l_error.error = helpers::ParseError::NoSuchClient;
+        return Found::failure(l_error);
     }
     if (f_filter.exclude_id >= 0 && *l_id == f_filter.exclude_id) {
-        return Found::failure(QStringLiteral("You cannot target yourself with this command."));
+        l_error.error = helpers::ParseError::IsSelf;
+        return Found::failure(l_error);
     }
     if (f_filter.in_area >= 0 && l_client->areaId() != f_filter.in_area) {
-        return Found::failure(QStringLiteral("Client %1 is not in this area.").arg(*l_id));
+        l_error.error = helpers::ParseError::NotInArea;
+        return Found::failure(l_error);
     }
     return Found::success(l_client);
 }

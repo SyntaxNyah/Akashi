@@ -1,5 +1,6 @@
 #include "core/command_context.h"
 
+#include "akashi/helpers/parse.h"
 #include "akashi/permissions.h"
 #include "core/client_session.h"
 #include "core/command_registry.h"
@@ -145,19 +146,18 @@ QString CommandContext::argument(int f_index) const
 
 std::optional<int> CommandContext::argumentAsInt(int f_index) const
 {
-    if (f_index >= 0 && f_index < m_arguments.size()) {
-        bool l_ok = false;
-        int l_value = m_arguments.at(f_index).toInt(&l_ok);
-        if (l_ok) {
-            return l_value;
-        }
-    }
-    return std::nullopt;
+    const auto l_number = helpers::parseInt(argument(f_index), QStringLiteral("number"));
+    return l_number ? std::optional<int>(*l_number) : std::nullopt;
 }
 
 void CommandContext::reply(const QString &f_message)
 {
     m_invoker->sendServerMessage(f_message);
+}
+
+void CommandContext::reply(const helpers::ParseError &f_error)
+{
+    reply(f_error.errorString());
 }
 
 void CommandContext::replyToArea(const QString &f_message)

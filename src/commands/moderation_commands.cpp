@@ -503,13 +503,12 @@ void cmdBans(CommandContext &f_context)
 
 void cmdUnban(CommandContext &f_context)
 {
-    bool ok;
-    int l_target_ban = f_context.argument(0).toInt(&ok);
-    if (!ok) {
-        f_context.reply("Invalid ban ID.");
+    const auto l_target_ban = helpers::parseInt(f_context.argument(0), QStringLiteral("ban_id"));
+    if (!l_target_ban) {
+        f_context.reply(l_target_ban.error());
         return;
     }
-    else if (f_context.server()->databaseManager()->invalidateBan(l_target_ban))
+    else if (f_context.server()->databaseManager()->invalidateBan(*l_target_ban))
         f_context.reply("Successfully invalidated ban " + f_context.argument(0) + ".");
     else
         f_context.reply("Couldn't invalidate ban " + f_context.argument(0) + ", are you sure it exists?");
@@ -789,12 +788,12 @@ void cmdKickUid(CommandContext &f_context)
 
 void cmdUpdateBan(CommandContext &f_context)
 {
-    bool conv_ok = false;
-    int l_ban_id = f_context.argument(0).toInt(&conv_ok);
-    if (!conv_ok) {
-        f_context.reply("Invalid ban ID.");
+    const auto l_parsed_id = helpers::parseInt(f_context.argument(0), QStringLiteral("ban_id"));
+    if (!l_parsed_id) {
+        f_context.reply(l_parsed_id.error());
         return;
     }
+    const int l_ban_id = *l_parsed_id;
     QVariant l_updated_info;
     if (f_context.argument(1) == "duration") {
         long long l_duration_seconds = 0;

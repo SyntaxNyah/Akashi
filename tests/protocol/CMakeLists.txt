@@ -1,7 +1,10 @@
 # Protocol regression tests, see tst_protocol.cpp.
 qt_add_executable(tst_protocol tst_protocol.cpp)
 
+# The test drives the real server binary and stays a black box; it links
+# only the pure helpers, to render the refusals it expects to receive.
 target_link_libraries(tst_protocol PRIVATE
+    akashi_helpers
     Qt6::Core
     Qt6::Network
     Qt6::Test

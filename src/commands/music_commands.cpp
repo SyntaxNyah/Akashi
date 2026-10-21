@@ -1,5 +1,6 @@
 #include "commands/music_commands.h"
 
+#include "akashi/helpers/parse.h"
 #include "akashi/permissions.h"
 #include "commands/moderation_commands.h"
 #include "core/client_session.h"
@@ -9,6 +10,8 @@
 #include "core/server_context.h"
 #include "world/area.h"
 #include "world/jukebox.h"
+
+#include <limits>
 
 namespace akashi::commands {
 
@@ -126,12 +129,16 @@ void cmdAddMusic(CommandContext &f_context)
 
     QString l_song_name = l_argv.value(0).trimmed();
     QString l_true_name = l_argv.size() >= 2 ? l_argv.value(1).trimmed() : l_song_name;
+    // The duration is optional; left empty it means unknown (0), but a
+    // mistyped one is refused instead of quietly becoming 0.
     int l_song_duration = 0;
-    if (l_argv.size() >= 3) {
-        bool ok;
-        l_song_duration = l_argv.value(2).trimmed().toInt(&ok);
-        if (!ok)
-            l_song_duration = 0;
+    if (const QString l_duration_text = l_argv.value(2).trimmed(); !l_duration_text.isEmpty()) {
+        const auto l_duration = helpers::parseInt(l_duration_text, QStringLiteral("song_duration"), 0, std::numeric_limits<int>::max());
+        if (!l_duration) {
+            f_context.reply(l_duration.error());
+            return;
+        }
+        l_song_duration = *l_duration;
     }
 
     akashi::Jukebox *l_jukebox = f_context.server()->areaById(f_context.areaId())->jukebox();

@@ -109,6 +109,9 @@ class AKASHI_CORE_EXPORT CommandContext
     std::optional<int> argumentAsInt(int f_index) const;
 
     void reply(const QString &f_message);
+    // Tells the invoker why their input was refused, in the words
+    // ParseError::errorString() gives the code.
+    void reply(const helpers::ParseError &f_error);
     void replyToArea(const QString &f_message);
     void replyToServer(const QString &f_message);
     void sendPacket(const QString &f_header, const QStringList &f_fields);

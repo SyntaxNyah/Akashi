@@ -19,6 +19,8 @@
 // Protocol regression tests. Starts the real server and compares network traffic against recorded output.
 // Set AKASHI_RECORD_PACKETS=1 to print received packets when the recordings need updating.
 
+#include "akashi/helpers/parse_error.h"
+
 #include <QProcess>
 #include <QSettings>
 #include <QTcpServer>
@@ -1680,11 +1682,20 @@ void ProtocolTest::areaMessageRejectsOutOfRangeAreaId()
     // owners() check ran before any range test) and take the whole server
     // down. It must now reply with a validation error and stay alive.
     client.send(QStringLiteral("CT#Tester#/a 99999 hello#%"));
+    // The refusal the server should send, rendered by the same helper it
+    // uses, so a rewording or translation does not break this test. The
+    // fixture's areas.json holds two areas, IDs 0 and 1.
+    akashi::helpers::ParseError expected;
+    expected.error = akashi::helpers::ParseError::OutOfRange;
+    expected.input = QStringLiteral("99999");
+    expected.subject = QStringLiteral("area_id");
+    expected.min = 0;
+    expected.max = 1;
     QString error;
     QVERIFY(client.waitForIdle());
     while (client.pendingCount() > 0) {
         const QString packet = client.takeNext();
-        if (packet.contains(QStringLiteral("valid AreaID")))
+        if (packet.contains(expected.errorString()))
             error = packet;
     }
     QVERIFY2(!error.isEmpty(), "expected a validation error for the out-of-range area id");
