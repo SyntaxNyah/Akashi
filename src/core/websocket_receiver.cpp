@@ -69,6 +69,10 @@ WebSocketTransport::WebSocketTransport(QWebSocket *f_socket, const TrustedProxyL
 {
     m_client_socket = f_socket;
     m_client_socket->setParent(this);
+    // Qt assembles a whole message before handleMessage sees it, so the
+    // limit has to apply here too or a peer can make it buffer far more.
+    m_client_socket->setMaxAllowedIncomingMessageSize(FRAME_BYTE_LIMIT);
+    m_client_socket->setMaxAllowedIncomingFrameSize(FRAME_BYTE_LIMIT);
     connect(m_client_socket, &QWebSocket::textMessageReceived, this, &WebSocketTransport::handleMessage);
     connect(m_client_socket, &QWebSocket::disconnected, this, &WebSocketTransport::onSocketDisconnected);
     connect(m_client_socket, &QWebSocket::pong, this, &WebSocketTransport::onPong);

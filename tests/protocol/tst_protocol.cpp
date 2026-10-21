@@ -187,6 +187,7 @@ class ProtocolTest : public QObject
     void escapeCodeRoundtrip();
     void pipelinedFrame();
     void oversizedFrameDisconnects();
+    void caseAlertReachesOnlyMatchingRoles();
 
   private:
     // Runs and checks the handshake up to (not including) RD.
@@ -1785,6 +1786,45 @@ void ProtocolTest::oversizedFrameDisconnects()
         const QString packet = witness.takeNext();
         QVERIFY2(!packet.startsWith(QStringLiteral("CT#")), qPrintable("oversized frame was processed: " + packet));
     }
+}
+
+void ProtocolTest::caseAlertReachesOnlyMatchingRoles()
+{
+    TestClient announcer;
+    joinServer(announcer);
+    TestClient defense;
+    joinServer(defense, 1);
+    TestClient judge;
+    joinServer(judge, 2);
+    TestClient nobody;
+    joinServer(nobody, 3);
+
+    // Preferences are case list, CM, then defense, prosecutor, judge,
+    // jurors, stenographer.
+    defense.send(QStringLiteral("SETCASE##0#1#0#0#0#0#%"));
+    judge.send(QStringLiteral("SETCASE##0#0#0#1#0#0#%"));
+    for (TestClient *client : {&announcer, &defense, &judge, &nobody}) {
+        QVERIFY(client->waitForIdle());
+        while (client->pendingCount() > 0)
+            client->takeNext();
+    }
+
+    // The case needs defense only.
+    announcer.send(QStringLiteral("CASEA#My Case#1#0#0#0#0#%"));
+
+    const auto heardAlert = [](TestClient &f_client) {
+        bool l_heard = false;
+        f_client.waitForIdle();
+        while (f_client.pendingCount() > 0) {
+            if (f_client.takeNext().startsWith(QStringLiteral("CASEA#")))
+                l_heard = true;
+        }
+        return l_heard;
+    };
+    QVERIFY2(heardAlert(defense), "the defense player did not hear an alert for a defense case");
+    QVERIFY2(!heardAlert(judge), "a judge-only player heard an alert for a defense case");
+    QVERIFY2(!heardAlert(nobody), "a player wanting no roles heard the alert");
+    QVERIFY2(!heardAlert(announcer), "a player wanting no roles heard their own alert");
 }
 
 QTEST_GUILESS_MAIN(ProtocolTest)

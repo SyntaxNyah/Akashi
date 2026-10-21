@@ -1770,14 +1770,20 @@ void ClientSession::broadcastArea(const akashi::Packet &f_packet)
 
 void ClientSession::broadcastCaseAlert(const QList<bool> &f_needs, const akashi::Packet &f_packet)
 {
-    const QSet<bool> l_needs_set(f_needs.begin(), f_needs.end());
     const QVector<ClientSession *> l_clients = m_server->clients();
     for (ClientSession *l_client : l_clients) {
+        if (!l_client->isJoined()) {
+            continue;
+        }
+        // A client hears the alert when it wants at least one of the roles
+        // the case needs, compared role by role.
         const QList<bool> l_preferences = l_client->casingPreferences();
-        QSet<bool> l_matches(l_preferences.begin(), l_preferences.end());
-        l_matches.intersect(l_needs_set);
-        if (!l_matches.isEmpty()) {
-            l_client->sendPacket(f_packet);
+        const qsizetype l_roles = std::min(f_needs.size(), l_preferences.size());
+        for (qsizetype i = 0; i < l_roles; ++i) {
+            if (f_needs.at(i) && l_preferences.at(i)) {
+                l_client->sendPacket(f_packet);
+                break;
+            }
         }
     }
 }

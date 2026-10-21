@@ -187,8 +187,8 @@ class JoinHandler : public PacketHandler
     void handle(const Message &f_message, IPacketContext &f_context) const override
     {
         Q_UNUSED(f_message)
-        if (f_context.hwid().isEmpty()) {
-            // No early connecting!
+        if (f_context.hwid().isEmpty() || !f_context.isIdentified()) {
+            // No early connecting! Skipping ID would also skip its checks.
             f_context.closeConnection();
             return;
         }

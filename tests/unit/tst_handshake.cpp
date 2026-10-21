@@ -28,7 +28,7 @@ class tst_Handshake : public QObject
     void characterAndMusicListsAreSent();
     void joinRunsJoinRulesBeforeDone();
     void joinRefusedByServerRule();
-    void joinNeedsAHwidAndHappensOnce();
+    void joinNeedsHelloAndIdentifyAndHappensOnce();
     void characterSelectFollowsTheOldRules();
     void keepaliveAnswersWithCheck();
     void characterPasswordIsRemembered();
@@ -195,6 +195,7 @@ void tst_Handshake::joinRunsJoinRulesBeforeDone()
 {
     FakeContext l_context;
     l_context.stored_hwid = "hwid123";
+    l_context.identified = true;
 
     run(Packet("RD"), l_context);
 
@@ -220,6 +221,7 @@ void tst_Handshake::joinRefusedByServerRule()
 {
     FakeContext l_context;
     l_context.stored_hwid = "hwid123";
+    l_context.identified = true;
     l_context.before_rule_block = "The whole floor is locked down.";
 
     run(Packet("RD"), l_context);
@@ -231,7 +233,7 @@ void tst_Handshake::joinRefusedByServerRule()
     QCOMPARE(l_context.sent.at(0).fields(), QStringList({"The whole floor is locked down."}));
 }
 
-void tst_Handshake::joinNeedsAHwidAndHappensOnce()
+void tst_Handshake::joinNeedsHelloAndIdentifyAndHappensOnce()
 {
     FakeContext l_early;
     run(Packet("RD"), l_early);
@@ -239,8 +241,17 @@ void tst_Handshake::joinNeedsAHwidAndHappensOnce()
     QVERIFY(!l_early.joined);
     QVERIFY(l_early.sent.isEmpty());
 
+    // HI without ID: joining would skip the version and webAO checks.
+    FakeContext l_unidentified;
+    l_unidentified.stored_hwid = "hwid123";
+    run(Packet("RD"), l_unidentified);
+    QVERIFY(l_unidentified.closed);
+    QVERIFY(!l_unidentified.joined);
+    QVERIFY(l_unidentified.sent.isEmpty());
+
     FakeContext l_again;
     l_again.stored_hwid = "hwid123";
+    l_again.identified = true;
     l_again.joined = true;
     run(Packet("RD"), l_again);
     QCOMPARE(l_again.calls, QStringList());
