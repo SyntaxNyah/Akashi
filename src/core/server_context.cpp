@@ -2110,7 +2110,37 @@ void ServerContext::applyConfigRules()
 
 std::optional<QString> ServerContext::saveWorld()
 {
-    return m_world->save(QFileInfo(configPath("areas.json")).absoluteFilePath());
+    // The file's grants are the config-owned ones, written back where they
+    // stand now. A group or legacy name is saved as the permissions it
+    // expanded to.
+    const QList<akashi::Grant> l_grants = m_permission_registry->grants();
+    const auto l_grants_at = [&l_grants](akashi::GrantScope f_scope, int f_place_id) {
+        QJsonObject l_object;
+        for (const akashi::Grant &l_grant : l_grants) {
+            if (l_grant.owner != QStringLiteral("config") || l_grant.scope != f_scope || l_grant.place_id != f_place_id) {
+                continue;
+            }
+            QString l_audience;
+            switch (l_grant.audience.kind) {
+            case akashi::AudienceKind::Everyone:
+                l_audience = QStringLiteral("everyone");
+                break;
+            case akashi::AudienceKind::Participants:
+                l_audience = QStringLiteral("participants");
+                break;
+            case akashi::AudienceKind::Role:
+                l_audience = QStringLiteral("role:") + l_grant.audience.role_id;
+                break;
+            case akashi::AudienceKind::Person:
+                continue;
+            }
+            QJsonArray l_audiences = l_object.value(l_grant.permission).toArray();
+            l_audiences.append(l_audience);
+            l_object.insert(l_grant.permission, l_audiences);
+        }
+        return l_object;
+    };
+    return m_world->save(QFileInfo(configPath("areas.json")).absoluteFilePath(), l_grants_at);
 }
 
 std::optional<QString> ServerContext::saveFloor(int f_floor_id)
@@ -2212,6 +2242,9 @@ std::optional<QString> ServerContext::reloadWorld()
 
     m_arup_broadcaster->clear();
     m_world->rebuild(QFileInfo(configPath("areas.json")).absoluteFilePath());
+    // The config reload above applied the file's grants to the old world;
+    // they name places by id, so they are applied again to the new one.
+    applyConfigGrants();
 
     for (const Placement &l_placement : std::as_const(l_placements)) {
         int l_area_id = m_world->areaNames().indexOf(l_placement.area_name);
@@ -2278,10 +2311,16 @@ std::optional<QString> ServerContext::removeArea(int f_area_id)
 
 std::optional<QString> ServerContext::removeFloor(int f_floor_id)
 {
+    // Floors after the removed one shift down by one; floor grants follow.
+    QVector<int> l_floor_mapping(m_world->floorCount());
+    for (int i = 0; i < l_floor_mapping.size(); ++i) {
+        l_floor_mapping[i] = i < f_floor_id ? i : (i == f_floor_id ? -1 : i - 1);
+    }
     QVector<int> l_mapping;
     if (auto l_error = m_world->removeFloor(f_floor_id, l_mapping)) {
         return l_error;
     }
+    m_permission_registry->remapPlaces(akashi::GrantScope::Floor, l_floor_mapping);
     m_arup_broadcaster->removeFloor(f_floor_id);
     applyAreaMapping(l_mapping);
     for (int i = 0; i < m_world->floorCount(); ++i) {
@@ -2292,6 +2331,9 @@ std::optional<QString> ServerContext::removeFloor(int f_floor_id)
 
 void ServerContext::applyAreaMapping(const QVector<int> &f_mapping)
 {
+    // Area grants name their area by id, so they follow the renumbering;
+    // a removed area's grants go with it.
+    m_permission_registry->remapPlaces(akashi::GrantScope::Area, f_mapping);
     const QVector<akashi::ClientSession *> l_clients = clients();
     for (akashi::ClientSession *l_client : l_clients) {
         const int l_old = l_client->areaId();
@@ -2303,16 +2345,17 @@ void ServerContext::applyAreaMapping(const QVector<int> &f_mapping)
 
 void ServerContext::onAreaBuilt(akashi::Area *f_area)
 {
-    connect(f_area->jukebox(), &akashi::Jukebox::musicListChanged, this, std::bind_front(&ServerContext::onJukeboxMusicListChanged, this, f_area->id(), f_area));
+    connect(f_area->jukebox(), &akashi::Jukebox::musicListChanged, this, std::bind_front(&ServerContext::onJukeboxMusicListChanged, this, f_area));
     connect(f_area->jukebox(), &akashi::Jukebox::songStarted, this, std::bind_front(&ServerContext::onJukeboxSongStarted, this, f_area));
     if (m_arup_broadcaster) {
         m_arup_broadcaster->addArea(f_area, f_area->floorId());
     }
 }
 
-void ServerContext::onJukeboxMusicListChanged(int f_area_id, akashi::Area *f_area)
+void ServerContext::onJukeboxMusicListChanged(akashi::Area *f_area)
 {
-    broadcast(akashi::Packet("FM", f_area->jukebox()->resolvedList()), f_area_id);
+    // The id is read now, not when the area was built: removals renumber.
+    broadcast(akashi::Packet("FM", f_area->jukebox()->resolvedList()), f_area->id());
 }
 
 void ServerContext::onJukeboxSongStarted(akashi::Area *f_area, const akashi::JukeboxSong &f_song)

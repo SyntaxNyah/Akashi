@@ -5,11 +5,13 @@
 #include "world/area.h"
 #include "world/floor.h"
 
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
 #include <optional>
 
 class QSettings;
@@ -68,7 +70,10 @@ class AKASHI_CORE_EXPORT World : public QObject, public IService
 
     // --- Saving ---
 
-    std::optional<QString> save(const QString &f_path);
+    // The world keeps no grants; the caller answers with a place's
+    // "grants" object, written next to its rules.
+    using GrantsAt = std::function<QJsonObject(GrantScope f_scope, int f_place_id)>;
+    std::optional<QString> save(const QString &f_path, const GrantsAt &f_grants_at = {});
     std::optional<QString> saveFloor(int f_floor_id, const QString &f_path);
 
     // --- Reshaping. The returned mapping is old area id -> new id, -1 for

@@ -12,6 +12,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringLiteral>
+#include <QVector>
 
 #include <functional>
 #include <optional>
@@ -129,6 +130,9 @@ class AKASHI_CORE_EXPORT PermissionRegistry : public IService
     // Removes exactly the matching entry; false when no such grant stands.
     bool removeGrant(const Grant &f_grant);
     void removeGrantsByOwner(const QString &f_owner_id);
+    // Follows a renumbering of floors or areas: a grant of that scope
+    // moves to mapping[place_id], or goes when the place was removed (-1).
+    void remapPlaces(GrantScope f_scope, const QVector<int> &f_mapping);
     // Every stored offer, sorted, so the --check-config dump diffs
     // cleanly between runs.
     QList<Grant> grants() const;

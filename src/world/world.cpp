@@ -387,16 +387,26 @@ static QJsonObject areaToJson(Area *f_area, const QString &f_floor_name)
     return l_entry;
 }
 
-std::optional<QString> World::save(const QString &f_path)
+std::optional<QString> World::save(const QString &f_path, const GrantsAt &f_grants_at)
 {
+    const auto l_grants = [&f_grants_at](GrantScope f_scope, int f_place_id) {
+        return f_grants_at ? f_grants_at(f_scope, f_place_id) : QJsonObject();
+    };
+
     QJsonObject l_root;
 
     QJsonObject l_floors;
     for (const Floor &l_floor : std::as_const(m_floors)) {
+        QJsonObject l_entry;
         const QJsonObject l_rules = rulesToJson(l_floor.before_rules, l_floor.after_rules, l_floor.transform_rules);
         if (!l_rules.isEmpty()) {
-            QJsonObject l_entry;
             l_entry[QStringLiteral("rules")] = l_rules;
+        }
+        const QJsonObject l_floor_grants = l_grants(GrantScope::Floor, l_floor.id);
+        if (!l_floor_grants.isEmpty()) {
+            l_entry[QStringLiteral("grants")] = l_floor_grants;
+        }
+        if (!l_entry.isEmpty()) {
             l_floors[l_floor.name] = l_entry;
         }
     }
@@ -405,7 +415,12 @@ std::optional<QString> World::save(const QString &f_path)
     }
 
     for (int i = 0; i < m_areas.size(); ++i) {
-        l_root[QString::number(i) + ":" + m_area_names[i]] = areaToJson(m_areas[i], floorById(m_areas[i]->floorId())->name);
+        QJsonObject l_entry = areaToJson(m_areas[i], floorById(m_areas[i]->floorId())->name);
+        const QJsonObject l_area_grants = l_grants(GrantScope::Area, i);
+        if (!l_area_grants.isEmpty()) {
+            l_entry[QStringLiteral("grants")] = l_area_grants;
+        }
+        l_root[QString::number(i) + ":" + m_area_names[i]] = l_entry;
     }
 
     return m_filesystem->writeFile(f_path, QJsonDocument(l_root).toJson(QJsonDocument::Indented));

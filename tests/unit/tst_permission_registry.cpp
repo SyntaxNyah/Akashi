@@ -27,6 +27,7 @@ class tst_PermissionRegistry : public QObject
 
     void scopedGrantsCoverOnlyTheirPlace();
     void duplicateGrantIsANoOp();
+    void remapPlacesFollowsRenumbering();
     void removeGrantTakesExactlyOne();
     void removeGrantsByOwnerSweeps();
     void grantsAreSortedDeterministically();
@@ -235,6 +236,37 @@ void tst_PermissionRegistry::scopedGrantsCoverOnlyTheirPlace()
     QVERIFY(l_registry.resolve(l_query));
     l_query.floor_id = 2;
     QVERIFY(!l_registry.resolve(l_query));
+}
+
+void tst_PermissionRegistry::remapPlacesFollowsRenumbering()
+{
+    akashi::PermissionRegistry l_registry;
+    seed(l_registry);
+    const auto l_area = [](int f_place_id) {
+        return akashi::Grant{QStringLiteral("ic_chat"), akashi::Audience::everyone(), akashi::GrantScope::Area, f_place_id, QStringLiteral("config")};
+    };
+    const akashi::Grant l_floor{QStringLiteral("ooc_chat"), akashi::Audience::everyone(), akashi::GrantScope::Floor, 1, QStringLiteral("config")};
+    const akashi::Grant l_server{QStringLiteral("ooc_chat"), akashi::Audience::everyone(), akashi::GrantScope::Server, -1, QStringLiteral("baseline")};
+    l_registry.addGrant(l_area(0));
+    l_registry.addGrant(l_area(1));
+    l_registry.addGrant(l_area(2));
+    l_registry.addGrant(l_floor);
+    l_registry.addGrant(l_server);
+
+    // Area 0 was removed: 1 and 2 move down, other scopes stay put.
+    l_registry.remapPlaces(akashi::GrantScope::Area, {-1, 0, 1});
+    const QList<akashi::Grant> l_remaining = l_registry.grants();
+    QCOMPARE(l_remaining.size(), 4);
+    for (const akashi::Grant &l_grant : {l_area(0), l_area(1), l_floor, l_server}) {
+        QVERIFY2(l_remaining.contains(l_grant), qPrintable(QStringLiteral("missing a grant at place %1").arg(l_grant.place_id)));
+    }
+
+    // Removing floor 0 moves floor 1's grant to floor 0.
+    l_registry.remapPlaces(akashi::GrantScope::Floor, {-1, 0});
+    akashi::Grant l_moved = l_floor;
+    l_moved.place_id = 0;
+    QVERIFY(l_registry.grants().contains(l_moved));
+    QVERIFY(!l_registry.grants().contains(l_floor));
 }
 
 void tst_PermissionRegistry::duplicateGrantIsANoOp()

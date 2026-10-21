@@ -783,7 +783,7 @@ class AKASHI_CORE_EXPORT ServerContext : public QObject
     // Signal reactions bound to their subject at connect time, so their
     // signatures carry more than the signal's arguments.
     void onClientTransportClosed(akashi::ClientSession *f_client, akashi::DisconnectKind f_kind);
-    void onJukeboxMusicListChanged(int f_area_id, akashi::Area *f_area);
+    void onJukeboxMusicListChanged(akashi::Area *f_area);
     void onJukeboxSongStarted(akashi::Area *f_area, const akashi::JukeboxSong &f_song);
 
     /**

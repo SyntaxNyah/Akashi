@@ -204,6 +204,27 @@ void PermissionRegistry::removeGrantsByOwner(const QString &f_owner_id)
     }
 }
 
+void PermissionRegistry::remapPlaces(GrantScope f_scope, const QVector<int> &f_mapping)
+{
+    AKASHI_ASSERT_OWNER_THREAD();
+    for (auto it = m_grants.begin(); it != m_grants.end();) {
+        QList<Grant> l_kept;
+        for (Grant l_grant : std::as_const(*it)) {
+            if (l_grant.scope == f_scope && l_grant.place_id >= 0 && l_grant.place_id < f_mapping.size()) {
+                l_grant.place_id = f_mapping.at(l_grant.place_id);
+                if (l_grant.place_id < 0) {
+                    continue;
+                }
+            }
+            if (!l_kept.contains(l_grant)) {
+                l_kept.append(l_grant);
+            }
+        }
+        *it = l_kept;
+        it = it->isEmpty() ? m_grants.erase(it) : std::next(it);
+    }
+}
+
 QList<Grant> PermissionRegistry::grants() const
 {
     AKASHI_ASSERT_OWNER_THREAD();

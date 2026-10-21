@@ -188,6 +188,7 @@ class ProtocolTest : public QObject
     void pipelinedFrame();
     void oversizedFrameDisconnects();
     void caseAlertReachesOnlyMatchingRoles();
+    void areaGrantsStayWithTheirAreaThroughRemovalAndSave();
 
   private:
     // Runs and checks the handshake up to (not including) RD.
@@ -1825,6 +1826,60 @@ void ProtocolTest::caseAlertReachesOnlyMatchingRoles()
     QVERIFY2(!heardAlert(judge), "a judge-only player heard an alert for a defense case");
     QVERIFY2(!heardAlert(nobody), "a player wanting no roles heard the alert");
     QVERIFY2(!heardAlert(announcer), "a player wanting no roles heard their own alert");
+}
+
+void ProtocolTest::areaGrantsStayWithTheirAreaThroughRemovalAndSave()
+{
+    TestClient mod;
+    joinServer(mod);
+    TestClient player;
+    joinServer(player, 1);
+
+    const auto drain = [](TestClient &f_client) {
+        QStringList l_received;
+        f_client.waitForIdle();
+        while (f_client.pendingCount() > 0)
+            l_received.append(f_client.takeNext());
+        return l_received;
+    };
+    const auto send = [&drain](TestClient &f_client, const QString &f_packet) {
+        f_client.send(f_packet);
+        return drain(f_client);
+    };
+    const auto command = [&send](TestClient &f_client, const QString &f_text) {
+        return send(f_client, QStringLiteral("CT#Tester#%1#%").arg(f_text));
+    };
+    const QString l_denied = QStringLiteral("You do not have permission to use that command.");
+
+    loginAsModerator(mod);
+    QVERIFY(!command(mod, QStringLiteral("/createarea Annex")).filter(QStringLiteral("Created area [2] Annex")).isEmpty());
+
+    // Courtroom 1 (id 1) offers send_notice to everyone. The player waits
+    // there, the moderator in the new Annex (id 2).
+    send(player, QStringLiteral("CC#0#1#TESTHWID#%"));
+    send(player, QStringLiteral("MC#Courtroom 1#1#%"));
+    send(mod, QStringLiteral("CC#0#2#MODHWID#%"));
+    send(mod, QStringLiteral("MC#Annex#2#%"));
+    drain(player);
+
+    // Removing Basement renumbers Courtroom 1 to 0 and the Annex to 1.
+    QVERIFY(!command(mod, QStringLiteral("/removearea Basement")).filter(QStringLiteral("Removed area Basement.")).isEmpty());
+    drain(player);
+
+    // The offer stays with Courtroom 1 and does not pass to the area that
+    // took over its old id.
+    QVERIFY(!command(player, QStringLiteral("/notice still here")).filter(QStringLiteral("BB#")).isEmpty());
+    send(player, QStringLiteral("MC#Annex#1#%"));
+    QVERIFY(!command(player, QStringLiteral("/notice wrong place")).filter(l_denied).isEmpty());
+
+    // Saving writes the offer back, and reloading the file keeps it there.
+    send(player, QStringLiteral("MC#Courtroom 1#1#%"));
+    QVERIFY(!command(mod, QStringLiteral("/saveareas")).filter(QStringLiteral("Saved the floors, areas and their rules to areas.json.")).isEmpty());
+    command(mod, QStringLiteral("/loadareas"));
+    drain(player);
+    QVERIFY(!command(player, QStringLiteral("/notice after reload")).filter(QStringLiteral("BB#")).isEmpty());
+    send(player, QStringLiteral("MC#Annex#1#%"));
+    QVERIFY(!command(player, QStringLiteral("/notice wrong place")).filter(l_denied).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(ProtocolTest)
