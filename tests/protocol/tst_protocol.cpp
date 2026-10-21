@@ -188,6 +188,7 @@ class ProtocolTest : public QObject
     void oversizedFrameDisconnects();
     void caseAlertReachesOnlyMatchingRoles();
     void areaGrantsStayWithTheirAreaThroughRemovalAndSave();
+    void scriptTargetVerbsActOnlyForTheInvoker();
 
   private:
     // Runs and checks the handshake up to (not including) RD.
@@ -1879,6 +1880,61 @@ void ProtocolTest::areaGrantsStayWithTheirAreaThroughRemovalAndSave()
     QVERIFY(!command(player, QStringLiteral("/notice after reload")).filter(QStringLiteral("BB#")).isEmpty());
     send(player, QStringLiteral("MC#Annex#1#%"));
     QVERIFY(!command(player, QStringLiteral("/notice wrong place")).filter(l_denied).isEmpty());
+}
+
+void ProtocolTest::scriptTargetVerbsActOnlyForTheInvoker()
+{
+    // Stage the scripting FFI, the Lua host and an ungated script command
+    // that tries to mute and move whoever it names, then restart.
+    const QDir l_built(QFileInfo(QStringLiteral(AKASHI_BINARY_PATH)).absolutePath() + QStringLiteral("/plugins"));
+    const QStringList l_libraries = {QStringLiteral("libakashi_scripting_ffi.so"), QStringLiteral("libakashi_lua_host.so")};
+    for (const QString &l_library : l_libraries) {
+        if (!l_built.exists(l_library))
+            QSKIP("The scripting plugins are not built.");
+    }
+    m_server->kill();
+    m_server->waitForFinished(5000);
+    const QString l_plugins = m_workdir->path() + QStringLiteral("/plugins");
+    QVERIFY(QDir().mkpath(l_plugins + QStringLiteral("/lua")));
+    for (const QString &l_library : l_libraries)
+        QVERIFY(QFile::copy(l_built.absoluteFilePath(l_library), l_plugins + "/" + l_library));
+    QFile l_script(l_plugins + QStringLiteral("/lua/gate-test.lua"));
+    QVERIFY(l_script.open(QIODevice::WriteOnly | QIODevice::Text));
+    l_script.write(R"(--[[ akashi-plugin
+{"id": "test.gate", "version": "1.0.0", "dependencies": ["akashi.lua-host"]}
+--]]
+akashi.register_command("gatetest", "/gatetest <id>", "Tries to mute and move a client.", function(ctx, args)
+    local muted = akashi.target_set_sanction(ctx, 1, "muted", true)
+    local moved = akashi.target_change_area(ctx, 1, 1)
+    akashi.reply(ctx, "muted=" .. tostring(muted) .. " moved=" .. tostring(moved))
+end)
+)");
+    l_script.close();
+    m_server->start(QStringLiteral(AKASHI_BINARY_PATH), QStringList());
+    QVERIFY(m_server->waitForStarted(10000));
+
+    TestClient mod;
+    joinServer(mod);
+    TestClient player;
+    joinServer(player, 1);
+    const auto command = [](TestClient &f_client, const QString &f_text) {
+        f_client.send(QStringLiteral("CT#Tester#%1#%").arg(f_text));
+        QStringList l_received;
+        f_client.waitForIdle();
+        while (f_client.pendingCount() > 0)
+            l_received.append(f_client.takeNext());
+        return l_received;
+    };
+
+    // The command has no gate, but it acts for the person typing it: a
+    // player may not mute or move the moderator through it.
+    QStringList l_reply = command(player, QStringLiteral("/gatetest 0"));
+    QVERIFY2(!l_reply.filter(QStringLiteral("muted=false moved=false")).isEmpty(), qPrintable(l_reply.join(" | ")));
+
+    // A moderator may do both to the player.
+    loginAsModerator(mod);
+    l_reply = command(mod, QStringLiteral("/gatetest 1"));
+    QVERIFY2(!l_reply.filter(QStringLiteral("muted=true moved=true")).isEmpty(), qPrintable(l_reply.join(" | ")));
 }
 
 QTEST_GUILESS_MAIN(ProtocolTest)

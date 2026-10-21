@@ -139,6 +139,12 @@ extern "C"
                             const char *f_text, size_t f_text_length);
         int (*target_has_sanction)(AkashiCommandContext *f_context, int f_argument_index,
                                    const char *f_sanction_id, size_t f_sanction_id_length);
+        /* The two acting verbs do only what the person who typed the command
+         * could do through core, and return 0 otherwise. A core sanction
+         * needs its sanction.* permission, and a sanction-immune target
+         * yields only to super; a sanction the plugin defines itself is
+         * unchecked. Moving someone else needs kick, or cm.kick for a non-CM
+         * in the invoker's own area. */
         int (*target_set_sanction)(AkashiCommandContext *f_context, int f_argument_index,
                                    const char *f_sanction_id, size_t f_sanction_id_length,
                                    int f_active);

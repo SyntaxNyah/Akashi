@@ -6,6 +6,7 @@
 #include "akashi/filesystem_service.h"
 #include "akashi/logging_categories.h"
 #include "akashi/permissions.h"
+#include "akashi/sanctions.h"
 #include "akashi/scheduler.h"
 #include "akashi/service_registry.h"
 #include "core/command_context.h"
@@ -291,6 +292,28 @@ static int ffiTargetHasSanction(AkashiCommandContext *f_context, int f_argument_
     return l_target && l_target->hasSanction(toString(f_sanction_id, f_sanction_id_length)) ? 1 : 0;
 }
 
+// Scripts are trusted code, but a script command acts for whoever typed
+// it: the target verbs do only what that person could do through core,
+// whatever gate the script gave its command.
+
+// The core sanctions and the permission that applies or lifts each one.
+// A sanction a plugin defines itself has no entry and is the plugin's own.
+static const QHash<QString, QString> &sanctionPermissions()
+{
+    static const QHash<QString, QString> s_permissions = {
+        {akashi::sanction::muted, akashi::permission::sanction_mute},
+        {akashi::sanction::ooc_muted, akashi::permission::sanction_ooc_mute},
+        {akashi::sanction::dj_blocked, akashi::permission::sanction_block_dj},
+        {akashi::sanction::wtce_blocked, akashi::permission::sanction_block_wtce},
+        {akashi::sanction::gimped, akashi::permission::sanction_gimp},
+        {akashi::sanction::disemvoweled, akashi::permission::sanction_disemvowel},
+        {akashi::sanction::shaken, akashi::permission::sanction_shake},
+        {akashi::sanction::medieval, akashi::permission::sanction_medieval},
+        {akashi::sanction::charcurse, akashi::permission::sanction_charcurse},
+    };
+    return s_permissions;
+}
+
 static int ffiTargetSetSanction(AkashiCommandContext *f_context, int f_argument_index,
                                 const char *f_sanction_id, size_t f_sanction_id_length,
                                 int f_active)
@@ -299,7 +322,18 @@ static int ffiTargetSetSanction(AkashiCommandContext *f_context, int f_argument_
     if (!l_target) {
         return 0;
     }
-    l_target->setSanction(toString(f_sanction_id, f_sanction_id_length), f_active != 0);
+    akashi::CommandContext *l_invoker = context(f_context);
+    const QString l_sanction = toString(f_sanction_id, f_sanction_id_length);
+    const auto l_permission = sanctionPermissions().constFind(l_sanction);
+    if (l_permission != sanctionPermissions().constEnd() && !l_invoker->canPerform(*l_permission)) {
+        return 0;
+    }
+    // As in core, the sanction-immune yield only to super.
+    if (f_active != 0 && l_target->clientId() != l_invoker->clientId() &&
+        l_target->canPerform(akashi::permission::sanction_immune) && !l_invoker->canPerform(akashi::permission::super)) {
+        return 0;
+    }
+    l_target->setSanction(l_sanction, f_active != 0);
     return 1;
 }
 
@@ -308,6 +342,16 @@ static int ffiTargetChangeArea(AkashiCommandContext *f_context, int f_argument_i
     auto l_target = target(f_context, f_argument_index);
     if (!l_target) {
         return 0;
+    }
+    // Moving someone else takes kick, or cm.kick for someone in the
+    // invoker's own area who is not one of its CMs - /area_kick's rules.
+    akashi::CommandContext *l_invoker = context(f_context);
+    if (l_target->clientId() != l_invoker->clientId() && !l_invoker->canPerform(akashi::permission::kick)) {
+        const akashi::Area *l_area = s_world ? s_world->areaById(l_invoker->areaId()) : nullptr;
+        const bool l_in_own_area = l_area && l_target->areaId() == l_invoker->areaId();
+        if (!l_in_own_area || !l_invoker->canPerform(akashi::permission::cm_kick) || l_area->owners().contains(l_target->clientId())) {
+            return 0;
+        }
     }
     l_target->changeArea(f_area_id);
     return 1;
