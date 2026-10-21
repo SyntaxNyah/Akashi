@@ -8,6 +8,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <algorithm>
+
 namespace akashi {
 namespace config {
 
@@ -173,6 +175,29 @@ static QVector<RuleDeclaration> parseRules(const QJsonObject &f_rules)
     return l_result;
 }
 
+static int areaPrefix(const QString &f_key, bool *f_ok = nullptr)
+{
+    return f_key.section(QLatin1Char(':'), 0, 0).toInt(f_ok);
+}
+
+QStringList areaSections(const QStringList &f_keys)
+{
+    QStringList l_sections;
+    for (const QString &l_key : f_keys) {
+        bool l_is_area = false;
+        areaPrefix(l_key, &l_is_area);
+        if (l_is_area) {
+            l_sections.append(l_key);
+        }
+    }
+    std::sort(l_sections.begin(), l_sections.end(), [](const QString &a, const QString &b) {
+        const int l_a = areaPrefix(a);
+        const int l_b = areaPrefix(b);
+        return l_a != l_b ? l_a < l_b : a < b;
+    });
+    return l_sections;
+}
+
 AreaRulesConfig loadAreaRules(const QString &f_path)
 {
     AreaRulesConfig l_config;
@@ -196,17 +221,11 @@ AreaRulesConfig loadAreaRules(const QString &f_path)
             l_config.floor_rules.insert(it.key(), l_rules);
     }
 
-    for (auto it = l_root.begin(); it != l_root.end(); ++it) {
-        if (!it.value().isObject())
-            continue;
-        const QStringList l_parts = it.key().split(QLatin1Char(':'));
-        bool l_is_area = false;
-        const int l_index = l_parts.first().toInt(&l_is_area);
-        if (!l_is_area || l_parts.size() < 2)
-            continue;
-        const auto l_rules = parseRules(it.value().toObject().value(QStringLiteral("rules")).toObject());
+    const QStringList l_sections = areaSections(l_root.keys());
+    for (int l_id = 0; l_id < l_sections.size(); ++l_id) {
+        const auto l_rules = parseRules(l_root.value(l_sections.at(l_id)).toObject().value(QStringLiteral("rules")).toObject());
         if (!l_rules.isEmpty())
-            l_config.area_rules.insert(l_index, l_rules);
+            l_config.area_rules.insert(l_id, l_rules);
     }
     return l_config;
 }
@@ -261,17 +280,11 @@ AreaGrantsConfig loadAreaGrants(const QString &f_path)
             l_config.floor_grants.insert(it.key(), l_grants);
     }
 
-    for (auto it = l_root.begin(); it != l_root.end(); ++it) {
-        if (!it.value().isObject())
-            continue;
-        const QStringList l_parts = it.key().split(QLatin1Char(':'));
-        bool l_is_area = false;
-        const int l_index = l_parts.first().toInt(&l_is_area);
-        if (!l_is_area || l_parts.size() < 2)
-            continue;
-        const auto l_grants = parseGrants(it.value().toObject().value(QStringLiteral("grants")).toObject());
+    const QStringList l_sections = areaSections(l_root.keys());
+    for (int l_id = 0; l_id < l_sections.size(); ++l_id) {
+        const auto l_grants = parseGrants(l_root.value(l_sections.at(l_id)).toObject().value(QStringLiteral("grants")).toObject());
         if (!l_grants.isEmpty())
-            l_config.area_grants.insert(l_index, l_grants);
+            l_config.area_grants.insert(l_id, l_grants);
     }
     return l_config;
 }

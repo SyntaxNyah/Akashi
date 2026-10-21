@@ -194,13 +194,7 @@ void World::buildFromConfig(const QString &f_rules_path)
 {
     // Assembles the area list, reading an optional floor assignment per area.
     // Sections without a numeric prefix (like "floors") are not areas.
-    QStringList l_raw_names = m_areas_ini->childGroups();
-    l_raw_names.removeIf([](const QString &f_raw) {
-        bool l_is_area = false;
-        f_raw.split(":").constFirst().toInt(&l_is_area);
-        return !l_is_area;
-    });
-    std::sort(l_raw_names.begin(), l_raw_names.end(), [](const QString &a, const QString &b) { return a.split(":")[0].toInt() < b.split(":")[0].toInt(); });
+    const QStringList l_raw_names = config::areaSections(m_areas_ini->childGroups());
 
     QHash<QString, int> l_floor_name_to_id;
     QStringList l_area_floor_names;
@@ -592,13 +586,7 @@ std::optional<QString> World::loadFloorFile(const QString &f_name, const QString
     // path the startup loader uses.
     const config::AreaRulesConfig l_rule_config = config::loadAreaRules(f_path);
     QSettings l_file_settings(f_path, m_areas_ini->format());
-    QStringList l_raw_names = l_file_settings.childGroups();
-    l_raw_names.removeIf([](const QString &f_raw) {
-        bool l_is_area = false;
-        f_raw.split(":").constFirst().toInt(&l_is_area);
-        return !l_is_area;
-    });
-    std::sort(l_raw_names.begin(), l_raw_names.end(), [](const QString &a, const QString &b) { return a.split(":")[0].toInt() < b.split(":")[0].toInt(); });
+    const QStringList l_raw_names = config::areaSections(l_file_settings.childGroups());
     if (l_raw_names.isEmpty()) {
         return QStringLiteral("The floor file defines no areas.");
     }
@@ -657,9 +645,11 @@ std::optional<QString> World::loadFloorFile(const QString &f_name, const QString
         l_apply_rules(it.value(), m_floors[f_floor_id].before_rules, m_floors[f_floor_id].after_rules, m_floors[f_floor_id].transform_rules);
     }
 
-    for (const QString &l_raw : std::as_const(l_raw_names)) {
+    // The file's rules are keyed by each area's position among its sections.
+    for (int l_local_index = 0; l_local_index < l_raw_names.size(); ++l_local_index) {
+        const QString &l_raw = l_raw_names.at(l_local_index);
         QStringList l_parts = l_raw.split(":");
-        const int l_local_index = l_parts.takeFirst().toInt();
+        l_parts.removeFirst();
         const QString l_area_name = l_parts.join(":");
 
         const int l_area_id = m_areas.size();

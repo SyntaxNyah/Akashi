@@ -1181,7 +1181,10 @@ void tst_World::configRulesForUnknownScopesAttachNothing()
                 }
             }
         },
-        "9:Nowhere": {
+        "0:Gate": {},
+        "1:Annex": {},
+        "2:Loft": {},
+        "7:Nowhere": {
             "rules": {
                 "ic_message_sent": {
                     "before": [{"action": "check_setting", "setting": "music_allowed"}]
@@ -1190,10 +1193,11 @@ void tst_World::configRulesForUnknownScopesAttachNothing()
         }
     })");
 
-    // A floor name and an area index the world does not have both warn and
-    // attach nowhere - especially not to some other floor or area.
+    // A floor name and an area the world does not have both warn and attach
+    // nowhere - especially not to some other floor or area. Areas count by
+    // position, so the fourth section is area 3, which this world lacks.
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unknown floor.*Penthouse")));
-    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unknown area index 9")));
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unknown area index 3")));
     l_world->applyConfigRules(l_path);
 
     QCOMPARE(l_world->floorById(0)->before_rules.size(), l_yard_count);

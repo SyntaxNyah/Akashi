@@ -54,6 +54,12 @@ struct AreaGrantsConfig
     QHash<int, QVector<GrantDeclaration>> area_grants;
 };
 
+// The area sections of an areas file - keys with a numeric prefix, like
+// "2:Courtroom" - in area order: by prefix, then by key. An area's id is
+// its position in this list, not its prefix, so gaps in the numbering
+// ("0:", "2:", "5:") still give ids 0, 1 and 2.
+AKASHI_CORE_EXPORT QStringList areaSections(const QStringList &f_keys);
+
 AKASHI_CORE_EXPORT QStringList loadTextFile(const QString &f_path);
 AKASHI_CORE_EXPORT MusicCatalog loadMusicList(const QString &f_path);
 AKASHI_CORE_EXPORT AreaRulesConfig loadAreaRules(const QString &f_path);

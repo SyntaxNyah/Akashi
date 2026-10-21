@@ -29,6 +29,9 @@ class tst_ConfigLoading : public QObject
     void iprangeBans();
     void areaRules();
     void areaRulesSkipNameless();
+    void areaSectionsOrderByPrefix_data();
+    void areaSectionsOrderByPrefix();
+    void areaRulesAndGrantsKeyByPosition();
     void areaRulesReadTransformBuckets();
     void deprecatedSettingNamesRemapOrRefuse();
     void malformedAreaRulesFilesLoadNothing();
@@ -209,6 +212,49 @@ void tst_ConfigLoading::areaRulesSkipNameless()
     const auto l_rules = l_config.floor_rules.value("Lobby");
     QCOMPARE(l_rules.size(), 1);
     QCOMPARE(l_rules[0].action, QString("block"));
+}
+
+void tst_ConfigLoading::areaSectionsOrderByPrefix_data()
+{
+    QTest::addColumn<QStringList>("keys");
+    QTest::addColumn<QStringList>("expected");
+
+    QTest::newRow("in order") << QStringList{"0:A", "1:B"} << QStringList{"0:A", "1:B"};
+    QTest::newRow("numeric, not text") << QStringList{"10:J", "2:B"} << QStringList{"2:B", "10:J"};
+    QTest::newRow("gaps") << QStringList{"5:E", "0:A", "2:C"} << QStringList{"0:A", "2:C", "5:E"};
+    QTest::newRow("not areas") << QStringList{"floors", "1:B", "x:Y"} << QStringList{"1:B"};
+    QTest::newRow("same prefix, by key") << QStringList{"1:Zed", "1:Amy"} << QStringList{"1:Amy", "1:Zed"};
+}
+
+void tst_ConfigLoading::areaSectionsOrderByPrefix()
+{
+    QFETCH(QStringList, keys);
+    QFETCH(QStringList, expected);
+    QCOMPARE(akashi::config::areaSections(keys), expected);
+}
+
+void tst_ConfigLoading::areaRulesAndGrantsKeyByPosition()
+{
+    // Area ids are positions, so with gaps in the prefixes the file's
+    // rules and grants must land on ids 0, 1 and 2, not 0, 2 and 5.
+    QTemporaryDir l_dir;
+    const QString l_path = writeAreasFile(l_dir, R"({
+        "0:Basement": {"rules": {"evidence_added": {"before": [{"action": "block"}]}}},
+        "2:Courtroom": {"grants": {"send_notice": "everyone"}},
+        "5:Lobby": {"rules": {"music_changed": {"before": [{"action": "block"}]}},
+                    "grants": {"area.cm": ["everyone", "role:MODERATOR"]}}
+    })");
+
+    const akashi::config::AreaRulesConfig l_rules = akashi::config::loadAreaRules(l_path);
+    QCOMPARE(l_rules.area_rules.keys().size(), 2);
+    QCOMPARE(l_rules.area_rules.value(0).first().event, QString("evidence_added"));
+    QCOMPARE(l_rules.area_rules.value(2).first().event, QString("music_changed"));
+
+    const akashi::config::AreaGrantsConfig l_grants = akashi::config::loadAreaGrants(l_path);
+    QCOMPARE(l_grants.area_grants.keys().size(), 2);
+    QCOMPARE(l_grants.area_grants.value(1).first().permission, QString("send_notice"));
+    QCOMPARE(l_grants.area_grants.value(2).size(), 2);
+    QCOMPARE(l_grants.area_grants.value(2).at(1).audience, QString("role:MODERATOR"));
 }
 
 void tst_ConfigLoading::areaRulesReadTransformBuckets()
